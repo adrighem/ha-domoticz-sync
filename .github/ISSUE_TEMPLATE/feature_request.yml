@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest support for a Domoticz device type or integration behavior.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should the integration do?
+    validations:
+      required: true
+  - type: textarea
+    id: domoticz-data
+    attributes:
+      label: Domoticz device data
+      description: If relevant, include a redacted JSON example from Domoticz.
+      render: json
+    validations:
+      required: false

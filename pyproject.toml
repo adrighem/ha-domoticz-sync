@@ -1,0 +1,63 @@
+[project]
+name = "ha-domoticz-import"
+version = "0.1.0"
+description = "Home Assistant custom integration that imports device state from Domoticz"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Vincent van Adrighem", email = "vincent@vanadrighem.eu" }
+]
+dependencies = [
+  "aiohttp>=3.9",
+  "voluptuous>=0.14"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: End Users/Desktop",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Home Automation"
+]
+
+[project.urls]
+Homepage = "https://github.com/adrighem/ha-domoticz-import"
+Issues = "https://github.com/adrighem/ha-domoticz-import/issues"
+Repository = "https://github.com/adrighem/ha-domoticz-import"
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0"
+]
+lint = [
+  "ruff>=0.8"
+]
+security = [
+  "pip-audit>=2.7"
+]
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["custom_components*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"custom_components.domoticz_import" = ["*.json", "translations/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]

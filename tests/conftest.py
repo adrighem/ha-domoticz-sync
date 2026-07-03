@@ -1,0 +1,54 @@
+"""Test isolation helpers."""
+
+import sys
+from pathlib import Path
+from types import ModuleType
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+custom_components = ModuleType("custom_components")
+custom_components.__path__ = [str(ROOT / "custom_components")]
+sys.modules.setdefault("custom_components", custom_components)
+
+domoticz_import = ModuleType("custom_components.domoticz_import")
+domoticz_import.__path__ = [str(ROOT / "custom_components" / "domoticz_import")]
+sys.modules.setdefault("custom_components.domoticz_import", domoticz_import)
+
+
+aiohttp = ModuleType("aiohttp")
+
+
+class BasicAuth:
+    """Small aiohttp BasicAuth stand-in for tests."""
+
+    def __init__(self, login, password=""):
+        """Initialize auth."""
+        self.login = login
+        self.password = password
+
+
+class ClientError(Exception):
+    """Small aiohttp ClientError stand-in."""
+
+
+class ClientResponseError(ClientError):
+    """Small aiohttp ClientResponseError stand-in."""
+
+    def __init__(self, request_info, history, *, status=0):
+        """Initialize response error."""
+        super().__init__(f"HTTP {status}")
+        self.request_info = request_info
+        self.history = history
+        self.status = status
+
+
+class ClientSession:
+    """Small aiohttp ClientSession stand-in."""
+
+
+aiohttp.BasicAuth = BasicAuth
+aiohttp.ClientError = ClientError
+aiohttp.ClientResponseError = ClientResponseError
+aiohttp.ClientSession = ClientSession
+sys.modules.setdefault("aiohttp", aiohttp)
