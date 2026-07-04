@@ -127,4 +127,11 @@ def normalize_base_url(base_url: str) -> str:
         raise DomoticzApiError("Domoticz URL must use http or https")
     if not parsed.netloc:
         raise DomoticzApiError("Domoticz URL must include a host")
-    return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+
+    path = parsed.path.rstrip("/")
+    if path.endswith("/json.htm"):
+        path = path[:-9]
+    elif path == "/json.htm":
+        path = ""
+
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")

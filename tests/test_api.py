@@ -46,7 +46,19 @@ def test_normalize_base_url():
     assert normalize_base_url("192.168.1.20:8080") == "http://192.168.1.20:8080"
     assert (
         normalize_base_url("https://domoticz.local:8443/some/path?x=1")
+        == "https://domoticz.local:8443/some/path"
+    )
+    assert (
+        normalize_base_url("https://domoticz.local:8443/some/path/json.htm")
+        == "https://domoticz.local:8443/some/path"
+    )
+    assert (
+        normalize_base_url("https://domoticz.local:8443/json.htm")
         == "https://domoticz.local:8443"
+    )
+    assert (
+        normalize_base_url("https://xmpp.vanadrighem.eu:8443/domoticz")
+        == "https://xmpp.vanadrighem.eu:8443/domoticz"
     )
 
 
