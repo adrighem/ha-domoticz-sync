@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/app-icon-1254.png" alt="Domoticz Sync app icon" width="160">
+</p>
+
 # Domoticz Sync for Home Assistant
 
 [![CI](https://github.com/adrighem/ha-domoticz-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/adrighem/ha-domoticz-sync/actions/workflows/ci.yml)
