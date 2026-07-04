@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 Release Please maintains this file from Conventional Commit messages.
 
+## [0.1.2](https://github.com/adrighem/ha-domoticz-sync/compare/v0.1.1...v0.1.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* prevent redundant generic fallback Value entities when primary metrics exist ([ad086fb](https://github.com/adrighem/ha-domoticz-sync/commit/ad086fb28138abc0677aba4c12239d80fc3f3bb6))
+
+
+### Documentation
+
+* guide users on syncing selected devices via dedicated user ([9fe1511](https://github.com/adrighem/ha-domoticz-sync/commit/9fe1511fedd589ff114c8446846ef089fe1b4036))
+* update installation instructions to be based on HACS ([6549365](https://github.com/adrighem/ha-domoticz-sync/commit/654936579bce91b112bfdd711d1d392fd3571a51))
+
 ## [0.1.1](https://github.com/adrighem/ha-domoticz-sync/compare/v0.1.0...v0.1.1) (2026-07-04)
 
 
