@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Domoticz",
-        "description": "Connect to the Domoticz JSON API. This integration syncs device state as read-only Home Assistant entities.",
+        "description": "Connect to the Domoticz JSON API. This integration syncs device state as read-only Home Assistant entities.\n\nTo sync only selected devices, create a dedicated user in Domoticz (Setup -> Users), assign devices to that user using 'Set Devices', and use those credentials here.",
         "data": {
           "url": "Domoticz URL",
           "username": "Username",
@@ -11,7 +11,8 @@
           "verify_ssl": "Verify SSL certificate"
         },
         "data_description": {
-          "url": "For example: http://192.168.1.20:8080"
+          "url": "For example: http://192.168.1.20:8080",
+          "username": "Optional. Use a dedicated Domoticz user to limit which devices are synced."
         }
       }
     },
