@@ -367,9 +367,13 @@ def extract_sensor_metrics(device: DomoticzDevice) -> list[DomoticzMetric]:
             seen_keys.add(spec.key)
             break
 
-    fallback = _fallback_metric(device)
-    if fallback is not None and fallback.key not in seen_keys:
-        metrics.append(fallback)
+    has_primary_metric = any(
+        m.entity_category != ENTITY_CATEGORY_DIAGNOSTIC for m in metrics
+    )
+    if not has_primary_metric:
+        fallback = _fallback_metric(device)
+        if fallback is not None and fallback.key not in seen_keys:
+            metrics.append(fallback)
 
     return metrics
 

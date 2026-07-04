@@ -258,3 +258,25 @@ def test_extracts_new_units():
     assert m_l.native_value == 150.0
     assert m_l.unit == "l"
     assert m_l.device_class == "water"
+
+
+def test_no_redundant_value_metric():
+    """Test that a redundant 'value' metric is not created when a primary metric exists."""
+    raw = {
+        "idx": "30",
+        "Name": "Outside Temperature",
+        "Type": "Temp",
+        "Temp": 18.5,
+        "Data": "18.5 C",
+        "BatteryLevel": 90,
+    }
+
+    metrics = {metric.key: metric for metric in extract_sensor_metrics(device(raw))}
+
+    # Primary 'temperature' and diagnostic 'battery_level' should exist
+    assert "temperature" in metrics
+    assert "battery_level" in metrics
+    assert metrics["temperature"].native_value == 18.5
+
+    # But the generic 'value' metric should NOT exist
+    assert "value" not in metrics
