@@ -19,9 +19,15 @@ It is intentionally read-only for the first version:
 
 ## Installation
 
-Copy `custom_components/domoticz_sync` into your Home Assistant `custom_components` directory and restart Home Assistant.
+This integration is installed via **HACS (Home Assistant Community Store)** as a custom repository:
 
-Then go to **Settings** -> **Devices & services** -> **Add integration** and search for **Domoticz Sync**.
+1. Open **HACS** in your Home Assistant interface.
+2. Click the three dots `...` in the top-right corner and select **Custom repositories**.
+3. Paste the URL of this repository (`https://github.com/adrighem/ha-domoticz-sync`) in the **Repository** field.
+4. Select **Integration** as the **Category** and click **Add**.
+5. Find **Domoticz Sync** in HACS, click **Download** in the bottom-right, and download the latest version.
+6. **Restart Home Assistant** to load the custom component.
+7. Go to **Settings** -> **Devices & Services** -> **Add Integration**, search for **Domoticz Sync**, and follow the configuration steps.
 
 ## Configuration
 
