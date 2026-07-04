@@ -1,9 +1,5 @@
 {
   "name": "Domoticz Sync",
   "render_readme": true,
-  "homeassistant": "2026.6.0",
-  "domains": [
-    "sensor",
-    "binary_sensor"
-  ]
+  "homeassistant": "2026.6.0"
 }
