@@ -261,7 +261,7 @@ def test_extracts_new_units():
 
 
 def test_no_redundant_value_metric():
-    """Test that a redundant 'value' metric is not created when a primary metric exists."""
+    """Test that redundant fallback metrics are omitted when primary metrics exist."""
     raw = {
         "idx": "30",
         "Name": "Outside Temperature",
