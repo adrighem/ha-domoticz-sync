@@ -24,8 +24,11 @@ DEVICE_CLASS_WATER = "water"
 DEVICE_CLASS_PRECIPITATION = "precipitation"
 DEVICE_CLASS_PRECIPITATION_INTENSITY = "precipitation_intensity"
 DEVICE_CLASS_WIND_SPEED = "wind_speed"
+DEVICE_CLASS_CURRENT = "current"
+DEVICE_CLASS_FREQUENCY = "frequency"
 
 UNIT_CELSIUS = "celsius"
+UNIT_FAHRENHEIT = "fahrenheit"
 UNIT_PERCENT = "percent"
 UNIT_HPA = "hpa"
 UNIT_LUX = "lux"
@@ -33,9 +36,13 @@ UNIT_VOLT = "volt"
 UNIT_WATT = "watt"
 UNIT_KWH = "kwh"
 UNIT_M3 = "m3"
+UNIT_LITERS = "l"
 UNIT_MM = "mm"
 UNIT_MM_PER_HOUR = "mm_per_hour"
 UNIT_METER_PER_SECOND = "meter_per_second"
+UNIT_BAR = "bar"
+UNIT_AMPERE = "A"
+UNIT_HERTZ = "hz"
 
 _NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 
@@ -53,6 +60,8 @@ class DomoticzDevice:
     status: str | None
     last_update: str | None
     hardware_name: str | None
+    hardware_id: int | None
+    device_id: str | None
     raw: Mapping[str, Any]
 
     @classmethod
@@ -60,6 +69,14 @@ class DomoticzDevice:
         """Create a Domoticz device from an API dictionary."""
         idx = _as_str(raw.get("idx") or raw.get("Idx") or raw.get("ID"))
         name = _as_str(raw.get("Name") or raw.get("name") or idx)
+
+        raw_hw_id = raw.get("HardwareID")
+        try:
+            hardware_id = int(raw_hw_id) if raw_hw_id is not None else None
+        except (ValueError, TypeError):
+            hardware_id = None
+
+        device_id = _optional_str(raw.get("ID"))
 
         return cls(
             idx=idx,
@@ -71,6 +88,8 @@ class DomoticzDevice:
             status=_optional_str(raw.get("Status")),
             last_update=_optional_str(raw.get("LastUpdate")),
             hardware_name=_optional_str(raw.get("HardwareName")),
+            hardware_id=hardware_id,
+            device_id=device_id,
             raw=raw,
         )
 
@@ -227,6 +246,96 @@ _FALSE_STATES = {
 
 def extract_sensor_metrics(device: DomoticzDevice) -> list[DomoticzMetric]:
     """Extract Home Assistant sensor metrics from a Domoticz device."""
+    # Special handling for P1 Smart Meter (multi-sensor energy/power)
+    if device.type == "P1 Smart Meter" or (
+        device.sub_type and "p1" in device.sub_type.lower()
+    ):
+        data_str = (device.data or "").strip()
+        parts = data_str.split(";")
+        if len(parts) == 6:
+            try:
+                import_t1 = float(parts[0]) / 1000.0  # Wh to kWh
+                import_t2 = float(parts[1]) / 1000.0  # Wh to kWh
+                export_t1 = float(parts[2]) / 1000.0  # Wh to kWh
+                export_t2 = float(parts[3]) / 1000.0  # Wh to kWh
+                power_import = float(parts[4])        # Watt
+                power_export = float(parts[5])        # Watt
+
+                # Include standard diagnostic sensors (battery and signal) if they exist
+                diagnostics: list[DomoticzMetric] = []
+                for spec in _METRIC_SPECS:
+                    if spec.entity_category == ENTITY_CATEGORY_DIAGNOSTIC:
+                        for field in spec.fields:
+                            if field in device.raw:
+                                parsed_val = _parse_float(device.raw[field])
+                                if parsed_val is not None:
+                                    diagnostics.append(
+                                        DomoticzMetric(
+                                            key=spec.key,
+                                            name=spec.name,
+                                            native_value=parsed_val,
+                                            device_class=spec.device_class,
+                                            state_class=spec.state_class,
+                                            unit=spec.unit,
+                                            entity_category=spec.entity_category,
+                                            icon=spec.icon,
+                                        )
+                                    )
+                                break
+
+                return [
+                    DomoticzMetric(
+                        "energy_import_t1",
+                        "Energy Import T1",
+                        import_t1,
+                        DEVICE_CLASS_ENERGY,
+                        STATE_CLASS_TOTAL_INCREASING,
+                        UNIT_KWH,
+                    ),
+                    DomoticzMetric(
+                        "energy_import_t2",
+                        "Energy Import T2",
+                        import_t2,
+                        DEVICE_CLASS_ENERGY,
+                        STATE_CLASS_TOTAL_INCREASING,
+                        UNIT_KWH,
+                    ),
+                    DomoticzMetric(
+                        "energy_export_t1",
+                        "Energy Export T1",
+                        export_t1,
+                        DEVICE_CLASS_ENERGY,
+                        STATE_CLASS_TOTAL_INCREASING,
+                        UNIT_KWH,
+                    ),
+                    DomoticzMetric(
+                        "energy_export_t2",
+                        "Energy Export T2",
+                        export_t2,
+                        DEVICE_CLASS_ENERGY,
+                        STATE_CLASS_TOTAL_INCREASING,
+                        UNIT_KWH,
+                    ),
+                    DomoticzMetric(
+                        "power_import",
+                        "Power Import",
+                        power_import,
+                        DEVICE_CLASS_POWER,
+                        STATE_CLASS_MEASUREMENT,
+                        UNIT_WATT,
+                    ),
+                    DomoticzMetric(
+                        "power_export",
+                        "Power Export",
+                        power_export,
+                        DEVICE_CLASS_POWER,
+                        STATE_CLASS_MEASUREMENT,
+                        UNIT_WATT,
+                    ),
+                ] + diagnostics
+            except ValueError:
+                pass
+
     metrics: list[DomoticzMetric] = []
     seen_keys: set[str] = set()
 
@@ -363,8 +472,16 @@ def _unit_from_text(value: str) -> str | None:
         return UNIT_HPA
     if "%" in lowered:
         return UNIT_PERCENT
+    if "bar" in lowered:
+        return UNIT_BAR
     if "volt" in lowered or re.search(r"\bv\b", lowered):
         return UNIT_VOLT
+    if "amp" in lowered or lowered.endswith(" a") or " a " in lowered:
+        return UNIT_AMPERE
+    if "hz" in lowered or "hertz" in lowered:
+        return UNIT_HERTZ
+    if "liter" in lowered or "litre" in lowered or re.search(r"\bl\b", lowered):
+        return UNIT_LITERS
     if "mm/h" in lowered:
         return UNIT_MM_PER_HOUR
     if "mm" in lowered:
@@ -373,6 +490,10 @@ def _unit_from_text(value: str) -> str | None:
         return UNIT_M3
     if "c" in lowered and any(token in lowered for token in ("deg", "celsius", " c")):
         return UNIT_CELSIUS
+    if "f" in lowered and any(
+        token in lowered for token in ("deg", "fahrenheit", " f")
+    ):
+        return UNIT_FAHRENHEIT
     return None
 
 
@@ -380,15 +501,20 @@ def _device_class_for_unit(unit: str | None) -> str | None:
     """Return a Home Assistant sensor device class key for a unit key."""
     return {
         UNIT_CELSIUS: DEVICE_CLASS_TEMPERATURE,
+        UNIT_FAHRENHEIT: DEVICE_CLASS_TEMPERATURE,
         UNIT_HPA: DEVICE_CLASS_PRESSURE,
+        UNIT_BAR: DEVICE_CLASS_PRESSURE,
         UNIT_LUX: DEVICE_CLASS_ILLUMINANCE,
         UNIT_VOLT: DEVICE_CLASS_VOLTAGE,
+        UNIT_AMPERE: DEVICE_CLASS_CURRENT,
         UNIT_WATT: DEVICE_CLASS_POWER,
         UNIT_KWH: DEVICE_CLASS_ENERGY,
         UNIT_M3: DEVICE_CLASS_WATER,
+        UNIT_LITERS: DEVICE_CLASS_WATER,
         UNIT_MM: DEVICE_CLASS_PRECIPITATION,
         UNIT_MM_PER_HOUR: DEVICE_CLASS_PRECIPITATION_INTENSITY,
         UNIT_METER_PER_SECOND: DEVICE_CLASS_WIND_SPEED,
+        UNIT_HERTZ: DEVICE_CLASS_FREQUENCY,
     }.get(unit)
 
 

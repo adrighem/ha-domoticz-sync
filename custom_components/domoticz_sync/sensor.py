@@ -11,8 +11,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
+    UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
+    UnitOfFrequency,
     UnitOfPower,
     UnitOfPrecipitationDepth,
     UnitOfPressure,
@@ -29,7 +31,6 @@ from .entity import DomoticzEntity
 from .models import (
     DomoticzDevice,
     DomoticzMetric,
-    extract_sensor_metrics,
 )
 
 _DEVICE_CLASS_MAP = {
@@ -48,6 +49,8 @@ _DEVICE_CLASS_MAP = {
         SensorDeviceClass, "PRECIPITATION_INTENSITY", "precipitation_intensity"
     ),
     "wind_speed": getattr(SensorDeviceClass, "WIND_SPEED", "wind_speed"),
+    "current": getattr(SensorDeviceClass, "CURRENT", "current"),
+    "frequency": getattr(SensorDeviceClass, "FREQUENCY", "frequency"),
 }
 
 _STATE_CLASS_MAP = {
@@ -57,13 +60,18 @@ _STATE_CLASS_MAP = {
 
 _UNIT_MAP = {
     "celsius": UnitOfTemperature.CELSIUS,
+    "fahrenheit": UnitOfTemperature.FAHRENHEIT,
     "percent": PERCENTAGE,
     "hpa": UnitOfPressure.HPA,
+    "bar": UnitOfPressure.BAR,
     "lux": LIGHT_LUX,
     "volt": UnitOfElectricPotential.VOLT,
+    "A": UnitOfElectricCurrent.AMPERE,
+    "hz": UnitOfFrequency.HERTZ,
     "watt": UnitOfPower.WATT,
     "kwh": UnitOfEnergy.KILO_WATT_HOUR,
     "m3": UnitOfVolume.CUBIC_METERS,
+    "l": UnitOfVolume.LITERS,
     "mm": UnitOfPrecipitationDepth.MILLIMETERS,
     "mm_per_hour": UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
     "meter_per_second": UnitOfSpeed.METERS_PER_SECOND,
@@ -80,10 +88,11 @@ async def async_setup_entry(
     coordinator = runtime_data.coordinator
 
     entities: list[DomoticzSensor] = []
-    for device in coordinator.data.devices.values():
+    for device_id, metrics in coordinator.data.metrics.items():
+        device = coordinator.data.devices[device_id]
         entities.extend(
             DomoticzSensor(coordinator, entry, device, metric)
-            for metric in extract_sensor_metrics(device)
+            for metric in metrics
         )
 
     async_add_entities(entities)
@@ -124,10 +133,10 @@ class DomoticzSensor(DomoticzEntity, SensorEntity):
     @property
     def _metric(self) -> DomoticzMetric | None:
         """Return the current metric from coordinator data."""
-        device = self.domoticz_device
-        if device is None:
+        if self.coordinator.data is None:
             return None
-        for metric in extract_sensor_metrics(device):
+        metrics = self.coordinator.data.metrics.get(self._idx) or []
+        for metric in metrics:
             if metric.key == self._metric_key:
                 return metric
         return None

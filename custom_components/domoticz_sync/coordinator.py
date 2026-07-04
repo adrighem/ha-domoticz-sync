@@ -23,7 +23,13 @@ from .const import (
     DEFAULT_VERIFY_SSL,
     DOMAIN,
 )
-from .models import DomoticzDevice
+from .models import (
+    BinaryState,
+    DomoticzDevice,
+    DomoticzMetric,
+    extract_binary_state,
+    extract_sensor_metrics,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +39,8 @@ class DomoticzData:
     """Latest Domoticz data snapshot."""
 
     devices: dict[str, DomoticzDevice]
+    metrics: dict[str, list[DomoticzMetric]]
+    binary_states: dict[str, BinaryState | None]
 
 
 @dataclass(slots=True)
@@ -81,7 +89,19 @@ class DomoticzDataUpdateCoordinator(DataUpdateCoordinator[DomoticzData]):
         except (DomoticzConnectionError, DomoticzError) as err:
             raise UpdateFailed(str(err)) from err
 
-        return DomoticzData(devices={device.idx: device for device in devices})
+        devices_dict = {device.idx: device for device in devices}
+        metrics_dict = {
+            device.idx: extract_sensor_metrics(device) for device in devices
+        }
+        binary_states_dict = {
+            device.idx: extract_binary_state(device) for device in devices
+        }
+
+        return DomoticzData(
+            devices=devices_dict,
+            metrics=metrics_dict,
+            binary_states=binary_states_dict,
+        )
 
 
 def build_api(hass: HomeAssistant, entry: ConfigEntry) -> DomoticzApi:

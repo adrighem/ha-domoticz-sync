@@ -45,8 +45,18 @@ class DomoticzEntity(CoordinatorEntity[DomoticzDataUpdateCoordinator]):
         """Return device registry information."""
         device = self.domoticz_device
         hardware_name = device.hardware_name if device else None
+
+        # Determine the best unique grouping identifier for this physical device.
+        # If the device has a specific hardware ID and physical address (device_id),
+        # use those to group multi-channel sensors/switches under one physical device.
+        # Fallback to the logical 'idx' database record.
+        if device and device.hardware_id is not None and device.device_id:
+            device_identifier = f"{device.hardware_id}_{device.device_id}"
+        else:
+            device_identifier = self._idx
+
         return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id, self._idx)},
+            identifiers={(DOMAIN, self._entry.entry_id, device_identifier)},
             name=self._device_name,
             manufacturer="Domoticz",
             model=device.type if device else None,

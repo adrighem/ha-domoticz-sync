@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DomoticzRuntimeData
 from .entity import DomoticzEntity
-from .models import BinaryState, DomoticzDevice, extract_binary_state
+from .models import BinaryState, DomoticzDevice
 
 _DEVICE_CLASS_MAP = {
     "door": BinarySensorDeviceClass.DOOR,
@@ -34,11 +34,13 @@ async def async_setup_entry(
     runtime_data: DomoticzRuntimeData = entry.runtime_data
     coordinator = runtime_data.coordinator
 
-    entities = [
-        DomoticzBinarySensor(coordinator, entry, device, binary_state)
-        for device in coordinator.data.devices.values()
-        if (binary_state := extract_binary_state(device)) is not None
-    ]
+    entities: list[DomoticzBinarySensor] = []
+    for device_id, binary_state in coordinator.data.binary_states.items():
+        if binary_state is not None:
+            device = coordinator.data.devices[device_id]
+            entities.append(
+                DomoticzBinarySensor(coordinator, entry, device, binary_state)
+            )
     async_add_entities(entities)
 
 
@@ -72,7 +74,6 @@ class DomoticzBinarySensor(DomoticzEntity, BinarySensorEntity):
     @property
     def _binary_state(self) -> BinaryState | None:
         """Return the current binary state from coordinator data."""
-        device = self.domoticz_device
-        if device is None:
+        if self.coordinator.data is None:
             return None
-        return extract_binary_state(device)
+        return self.coordinator.data.binary_states.get(self._idx)
