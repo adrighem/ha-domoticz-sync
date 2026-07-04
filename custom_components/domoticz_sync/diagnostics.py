@@ -1,4 +1,4 @@
-"""Diagnostics support for Domoticz Import."""
+"""Diagnostics support for Domoticz Sync."""
 
 from __future__ import annotations
 

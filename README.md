@@ -1,9 +1,9 @@
-# Domoticz Import for Home Assistant
+# Domoticz Sync for Home Assistant
 
-[![CI](https://github.com/adrighem/ha-domoticz-import/actions/workflows/ci.yml/badge.svg)](https://github.com/adrighem/ha-domoticz-import/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/adrighem/ha-domoticz-import/actions/workflows/codeql.yml/badge.svg)](https://github.com/adrighem/ha-domoticz-import/actions/workflows/codeql.yml)
+[![CI](https://github.com/adrighem/ha-domoticz-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/adrighem/ha-domoticz-sync/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/adrighem/ha-domoticz-sync/actions/workflows/codeql.yml/badge.svg)](https://github.com/adrighem/ha-domoticz-sync/actions/workflows/codeql.yml)
 
-This custom integration imports device state from Domoticz into Home Assistant using the Domoticz JSON API.
+This custom integration syncs device state from Domoticz into Home Assistant using the Domoticz JSON API.
 
 It is intentionally read-only for the first version:
 
@@ -15,9 +15,9 @@ It is intentionally read-only for the first version:
 
 ## Installation
 
-Copy `custom_components/domoticz_import` into your Home Assistant `custom_components` directory and restart Home Assistant.
+Copy `custom_components/domoticz_sync` into your Home Assistant `custom_components` directory and restart Home Assistant.
 
-Then go to **Settings** -> **Devices & services** -> **Add integration** and search for **Domoticz Import**.
+Then go to **Settings** -> **Devices & services** -> **Add integration** and search for **Domoticz Sync**.
 
 ## Configuration
 

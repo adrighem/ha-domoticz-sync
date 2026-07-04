@@ -1,4 +1,4 @@
-"""The Domoticz Import integration."""
+"""The Domoticz Sync integration."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Domoticz Import from a config entry."""
+    """Set up Domoticz Sync from a config entry."""
     api = build_api(hass, entry)
     coordinator = DomoticzDataUpdateCoordinator(hass, entry, api)
     await coordinator.async_config_entry_first_refresh()

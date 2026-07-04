@@ -11,9 +11,9 @@ custom_components = ModuleType("custom_components")
 custom_components.__path__ = [str(ROOT / "custom_components")]
 sys.modules.setdefault("custom_components", custom_components)
 
-domoticz_import = ModuleType("custom_components.domoticz_import")
-domoticz_import.__path__ = [str(ROOT / "custom_components" / "domoticz_import")]
-sys.modules.setdefault("custom_components.domoticz_import", domoticz_import)
+domoticz_sync = ModuleType("custom_components.domoticz_sync")
+domoticz_sync.__path__ = [str(ROOT / "custom_components" / "domoticz_sync")]
+sys.modules.setdefault("custom_components.domoticz_sync", domoticz_sync)
 
 
 aiohttp = ModuleType("aiohttp")

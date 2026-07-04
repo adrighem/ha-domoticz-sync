@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with Domoticz Import.
+description: Report a reproducible problem with Domoticz Sync.
 title: "[Bug]: "
 labels:
   - bug

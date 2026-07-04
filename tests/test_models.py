@@ -1,6 +1,6 @@
 """Tests for Domoticz value parsing."""
 
-from custom_components.domoticz_import.models import (
+from custom_components.domoticz_sync.models import (
     DomoticzDevice,
     extract_binary_state,
     extract_sensor_metrics,

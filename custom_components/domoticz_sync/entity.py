@@ -1,4 +1,4 @@
-"""Base entities for Domoticz Import."""
+"""Base entities for Domoticz Sync."""
 
 from __future__ import annotations
 

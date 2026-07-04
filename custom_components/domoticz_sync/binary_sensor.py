@@ -1,4 +1,4 @@
-"""Binary sensor platform for Domoticz Import."""
+"""Binary sensor platform for Domoticz Sync."""
 
 from __future__ import annotations
 

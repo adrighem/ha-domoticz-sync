@@ -2,7 +2,7 @@
 
 ## Project
 
-Domoticz Import is a Home Assistant custom integration that imports Domoticz device state as read-only Home Assistant entities.
+Domoticz Sync is a Home Assistant custom integration that syncs Domoticz device state as read-only Home Assistant entities.
 
 ## Priorities
 

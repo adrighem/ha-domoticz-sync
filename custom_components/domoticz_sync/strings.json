@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Domoticz",
-        "description": "Connect to the Domoticz JSON API. This integration imports device state as read-only Home Assistant entities.",
+        "description": "Connect to the Domoticz JSON API. This integration syncs device state as read-only Home Assistant entities.",
         "data": {
           "url": "Domoticz URL",
           "username": "Username",
@@ -27,7 +27,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Domoticz Import options",
+        "title": "Domoticz Sync options",
         "data": {
           "include_hidden": "Include hidden devices",
           "favorite_only": "Only import favorite devices",

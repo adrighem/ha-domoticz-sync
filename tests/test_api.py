@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from aiohttp import ClientResponseError
 
-from custom_components.domoticz_import.api import (
+from custom_components.domoticz_sync.api import (
     DomoticzApi,
     DomoticzApiError,
     DomoticzAuthError,

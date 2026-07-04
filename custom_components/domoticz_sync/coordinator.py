@@ -1,4 +1,4 @@
-"""Data coordinator for Domoticz Import."""
+"""Data coordinator for Domoticz Sync."""
 
 from __future__ import annotations
 

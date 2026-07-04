@@ -1,4 +1,4 @@
-"""Config flow for Domoticz Import."""
+"""Config flow for Domoticz Sync."""
 
 from __future__ import annotations
 
@@ -90,8 +90,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     return {"title": f"Domoticz ({base_url})", "base_url": base_url}
 
 
-class DomoticzImportConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Domoticz Import."""
+class DomoticzSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Domoticz Sync."""
 
     VERSION = 1
 
@@ -139,7 +139,7 @@ class DomoticzImportConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle Domoticz Import options."""
+    """Handle Domoticz Sync options."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

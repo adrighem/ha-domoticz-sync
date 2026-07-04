@@ -1,4 +1,4 @@
-"""Sensor platform for Domoticz Import."""
+"""Sensor platform for Domoticz Sync."""
 
 from __future__ import annotations
 

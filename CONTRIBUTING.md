@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Domoticz Import.
+Thanks for helping improve Domoticz Sync.
 
 ## Development
 
