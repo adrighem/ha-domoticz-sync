@@ -4,10 +4,12 @@ on:
   push:
   pull_request:
   schedule:
-    - cron: "0 0 * * *"
+    # Stagger the daily HACS check away from the common top-of-hour sample cron.
+    - cron: "37 3 * * *"
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   validate-hacs:
@@ -19,3 +21,4 @@ jobs:
         uses: hacs/action@main
         with:
           category: "integration"
+          comment: false

@@ -12,3 +12,9 @@
 - Verified locally with `python -m pytest` and `uvx ruff check .`.
 - After approval, pushed `42c30d9` to `main`, closed `PR:4`, confirmed all post-push GitHub Actions passed, and rechecked that the repo inbox/issues/PRs/alerts are clean.
 - Closed Release Please `PR:5` after approval because it only proposed a release for maintainer metadata, not a user-facing change.
+
+## 2026-07-09
+
+- Investigated failing scheduled HACS Validation run `28990549027`; the log showed an upstream GitHub raw-content rate limit while fetching `hacs.json`, followed by a false `integration_manifest` failure.
+- Confirmed the same HACS container digest passed on July 8 and on the last push, so the repository manifest itself was not the cause.
+- Updated the HACS workflow to use explicit read-only `contents: read` permissions, run the daily schedule at a staggered minute, and disable automated HACS comments.
