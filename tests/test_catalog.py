@@ -229,6 +229,7 @@ def test_v3_serialization_contains_the_complete_record() -> None:
                     "semantic": "temperature",
                     "unit": "celsius",
                     "state_class": "measurement",
+                    "options": None,
                 },
                 "stale": False,
                 "pending": False,
@@ -508,3 +509,37 @@ def test_compound_capability_serialization_round_trip() -> None:
     assert len(deserialized_record.capability.capabilities) == 2
     assert deserialized_record.capability.capabilities[0].value == 21.5
     assert deserialized_record.capability.capabilities[1].value == 50.0
+
+
+def test_catalog_from_document_legacy_v2_without_options_key() -> None:
+    """Legacy v2 catalog payload without options key deserializes safely."""
+    legacy_doc = {
+        "version": 2,
+        "targets": [
+            {
+                "target_id": "target-legacy-1",
+                "stale": False,
+                "capability": {
+                    "source": {
+                        "system": "home_assistant",
+                        "instance_id": "instance-1",
+                        "object_id": "switch.living_room",
+                        "capability_id": "state",
+                    },
+                    "kind": "binary",
+                    "name": "Living Room Switch",
+                    "value": True,
+                    "availability": "available",
+                    "unit": None,
+                    "state_class": None,
+                    "semantic": "outlet",
+                },
+            }
+        ],
+    }
+    catalog = catalog_from_document(legacy_doc)
+    assert len(catalog) == 1
+    record = catalog.records[0]
+    assert record.target_id == "target-legacy-1"
+    assert record.capability.options is None
+    assert record.capability.semantic == "outlet"

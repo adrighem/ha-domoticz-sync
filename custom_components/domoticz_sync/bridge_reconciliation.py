@@ -310,6 +310,8 @@ def _capability_kinds_for_strategy(
     """Return capability kinds stored under one negotiated feature catalog."""
     if strategy.kind is CapabilityKind.NUMERIC:
         return frozenset({CapabilityKind.NUMERIC, CapabilityKind.COMPOUND})
+    if strategy.kind is CapabilityKind.BINARY:
+        return frozenset({CapabilityKind.BINARY, CapabilityKind.TEXT})
     return frozenset({strategy.kind})
 
 

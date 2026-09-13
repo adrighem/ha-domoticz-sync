@@ -493,11 +493,56 @@ def _encode_uv_index(value, unit):
     return 0, _numeric_s_value(value) + ";0"
 
 
+def _encode_selector(value, options):
+    """Encode a selector option into Domoticz (nValue, sValue)."""
+    if not options:
+        return 0, "0"
+    if isinstance(value, str):
+        trimmed = value.strip()
+        try:
+            index = options.index(trimmed)
+            level = (index + 1) * 10
+            return 2, str(level)
+        except ValueError:
+            return 0, "0"
+    if isinstance(value, (int, float)):
+        val_int = int(round(value))
+        return (2 if val_int > 0 else 0), str(val_int)
+    return 0, "0"
+
+
+def _selector_options(options):
+    """Build Domoticz's Selector Switch options."""
+    if not options:
+        return {
+            "LevelNames": "Off",
+            "LevelOffHidden": "true",
+            "SelectorStyle": "0",
+        }
+    sanitized = [
+        opt.replace("|", "/").strip()
+        for opt in options
+        if isinstance(opt, str) and opt.strip()
+    ][:30]
+    return {
+        "LevelNames": "Off|" + "|".join(sanitized),
+        "LevelOffHidden": "true",
+        "SelectorStyle": "0",
+    }
+
+
 _CUSTOM_PROFILE = _TargetProfile(
     _CUSTOM_SENSOR_TYPE,
     _CUSTOM_SENSOR_SUBTYPE,
     _DEFAULT_SWITCH_TYPE,
     _encode_custom,
+    True,
+)
+_SELECTOR_PROFILE = _TargetProfile(
+    _GENERAL_SWITCH_TYPE,
+    _GENERAL_SWITCH_SUBTYPE,
+    18,
+    _encode_selector,
     True,
 )
 _TEMPERATURE_PROFILE = _TargetProfile(80, 5, 0, _encode_temperature, False)
@@ -584,7 +629,12 @@ def _target_profile(capability):
 
 
 def _binary_target_profile(capability):
-    """Choose a passive switch profile with a safe generic fallback."""
+    """Choose a switch or selector profile with a safe generic fallback."""
+    if (
+        getattr(capability, "options", None) is not None
+        or getattr(capability, "semantic", None) == "selector"
+    ):
+        return _SELECTOR_PROFILE
     return _TargetProfile(
         _GENERAL_SWITCH_TYPE,
         _GENERAL_SWITCH_SUBTYPE,
@@ -1364,7 +1414,7 @@ class DomoticzSyncPlugin:
     def _apply_binary_action(self, action):
         """Idempotently converge and re-read one passive binary target."""
         capability = action.capability
-        if capability.kind.value != "binary":
+        if capability.kind.value not in {"binary", "text"}:
             raise DomoticzApplyError
         return self._apply_profile_action(
             action,
@@ -1389,13 +1439,22 @@ class DomoticzSyncPlugin:
         if available:
             if capability.kind.value == "compound":
                 desired_values = profile.encoder(capability, None)
+            elif (
+                profile.manages_options
+                and getattr(capability, "options", None) is not None
+            ):
+                desired_values = profile.encoder(capability.value, capability.options)
             else:
                 desired_values = profile.encoder(capability.value, capability.unit)
         else:
             desired_values = None
-        options = (
-            _custom_sensor_options(capability.unit) if profile.manages_options else None
-        )
+        if profile.manages_options:
+            if getattr(capability, "options", None) is not None:
+                options = _selector_options(capability.options)
+            else:
+                options = _custom_sensor_options(capability.unit)
+        else:
+            options = None
         device = self._get_device(device_id)
         unit = self._get_unit(device)
 
@@ -1463,13 +1522,22 @@ class DomoticzSyncPlugin:
         if available:
             if capability.kind.value == "compound":
                 desired_values = profile.encoder(capability, None)
+            elif (
+                profile.manages_options
+                and getattr(capability, "options", None) is not None
+            ):
+                desired_values = profile.encoder(capability.value, capability.options)
             else:
                 desired_values = profile.encoder(capability.value, capability.unit)
         else:
             desired_values = None
-        desired_options = (
-            _custom_sensor_options(capability.unit) if profile.manages_options else None
-        )
+        if profile.manages_options:
+            if getattr(capability, "options", None) is not None:
+                desired_options = _selector_options(capability.options)
+            else:
+                desired_options = _custom_sensor_options(capability.unit)
+        else:
+            desired_options = None
         device, unit_keys = self._read_inventory_target_shape(device_id)
         created = False
 
@@ -1694,7 +1762,18 @@ class DomoticzSyncPlugin:
         options_changed = False
         if profile.manages_options:
             current_options = cls._validated_inventory_options(unit)
-            options_changed = current_options.get("Custom") != desired_options["Custom"]
+            if "LevelNames" in desired_options:
+                options_changed = (
+                    current_options.get("LevelNames") != desired_options["LevelNames"]
+                    or current_options.get("LevelOffHidden")
+                    != desired_options.get("LevelOffHidden")
+                    or current_options.get("SelectorStyle")
+                    != desired_options.get("SelectorStyle")
+                )
+            else:
+                options_changed = current_options.get("Custom") != desired_options.get(
+                    "Custom"
+                )
         values_changed = False
         if values is not None:
             n_value, s_value = values
@@ -1714,7 +1793,7 @@ class DomoticzSyncPlugin:
         if options_changed:
             _device, current = cls._require_inventory_target_unit(device_id, profile)
             merged_options = cls._validated_inventory_options(current)
-            merged_options["Custom"] = desired_options["Custom"]
+            merged_options.update(desired_options)
             current.Options = merged_options
         if values_changed:
             _device, current = cls._require_inventory_target_unit(device_id, profile)

@@ -22,7 +22,16 @@ EXPORT_LABEL_ID = "domoticz_export"
 EXPORT_LABEL_NAME = "Domoticz Export"
 
 CONTROLLABLE_EXPORT_DOMAINS = frozenset(
-    {"input_boolean", "switch", "light", "cover", "button"}
+    {
+        "input_boolean",
+        "switch",
+        "light",
+        "cover",
+        "button",
+        "vacuum",
+        "select",
+        "input_select",
+    }
 )
 
 DEFAULT_NAME = "Domoticz Sync"

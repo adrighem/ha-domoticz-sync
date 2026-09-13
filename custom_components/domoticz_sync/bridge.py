@@ -1144,6 +1144,93 @@ class DomoticzBridgeManager:
                     ControlResultStatus.REJECTED,
                     error="command is not supported",
                 )
+
+        elif entry.domain == "vacuum":
+            if cmd in {"on", "start", "clean"}:
+                domain = "vacuum"
+                service = "start"
+                data = {"entity_id": entity_id}
+            elif cmd in {"off", "dock", "return_to_base"}:
+                domain = "vacuum"
+                service = "return_to_base"
+                data = {"entity_id": entity_id}
+            elif cmd == "pause":
+                domain = "vacuum"
+                service = "pause"
+                data = {"entity_id": entity_id}
+            elif cmd == "stop":
+                domain = "vacuum"
+                service = "stop"
+                data = {"entity_id": entity_id}
+            elif cmd == "toggle":
+                domain = "vacuum"
+                if current_state.state in {"on", "cleaning"}:
+                    service = "return_to_base"
+                else:
+                    service = "start"
+                data = {"entity_id": entity_id}
+            elif cmd in {"set level", "setlevel", "set_level"}:
+                level_int = int(round(request.level))
+                domain = "vacuum"
+                if level_int == 10:
+                    service = "start"
+                elif level_int == 20:
+                    service = "pause"
+                elif level_int in {0, 30}:
+                    service = "return_to_base"
+                elif level_int == 40:
+                    service = "stop"
+                else:
+                    return build_control_result(
+                        session.selection,
+                        request.request_id,
+                        ControlResultStatus.REJECTED,
+                        error="selector level is not supported",
+                    )
+                data = {"entity_id": entity_id}
+        elif entry.domain in {"select", "input_select"}:
+            domain = entry.domain
+            service = "select_option"
+            options = current_state.attributes.get("options", ())
+            if not isinstance(options, (list, tuple)) or not options:
+                return build_control_result(
+                    session.selection,
+                    request.request_id,
+                    ControlResultStatus.REJECTED,
+                    error="selector options are unavailable",
+                )
+            if cmd in {"set level", "setlevel", "set_level"}:
+                level_int = int(round(request.level))
+                idx = (level_int // 10) - 1
+                if 0 <= idx < len(options):
+                    selected_option = options[idx]
+                elif 0 <= level_int // 10 < len(options) and level_int % 10 == 0:
+                    selected_option = options[level_int // 10]
+                else:
+                    return build_control_result(
+                        session.selection,
+                        request.request_id,
+                        ControlResultStatus.REJECTED,
+                        error="selector level is not supported",
+                    )
+                data = {"entity_id": entity_id, "option": selected_option}
+            elif cmd in {"select_option", "selectoption"}:
+                selected_option = request.color or ""
+                if not selected_option or selected_option not in options:
+                    return build_control_result(
+                        session.selection,
+                        request.request_id,
+                        ControlResultStatus.REJECTED,
+                        error="option is not supported",
+                    )
+                data = {"entity_id": entity_id, "option": selected_option}
+            else:
+                return build_control_result(
+                    session.selection,
+                    request.request_id,
+                    ControlResultStatus.REJECTED,
+                    error="command is not supported",
+                )
         else:
             return build_control_result(
                 session.selection,

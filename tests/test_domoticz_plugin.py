@@ -4474,6 +4474,233 @@ def test_on_command_rejection_rollbacks_unit_state(loaded_plugin):
     )
 
 
+def test_selector_switch_create_update_and_options_sync(loaded_plugin):
+    """Selector switch creates selector switch and updates options dynamically."""
+    module, domoticz = loaded_plugin
+    protocol = module.wire_protocol
+
+    plugin, connection = _start_and_upgrade(module)
+    session_key, session_id = _complete_handshake(
+        module,
+        plugin,
+        connection,
+        server_features=(protocol.FEATURE_HA_EXPORT_BINARY_V1,),
+    )
+
+    # 1. Create selector switch
+    cap = protocol.Capability(
+        source=protocol.SourceIdentity(
+            "home_assistant", "instance-1", "select.mode", "state"
+        ),
+        kind=protocol.CapabilityKind.TEXT,
+        name="Mode Selector",
+        value="heat",
+        semantic="selector",
+        options=("off", "heat", "cool"),
+    )
+    action = protocol.ReconciliationAction(
+        kind=protocol.ReconciliationActionKind.CREATE,
+        capability=cap,
+    )
+    result = _send_binary_apply(
+        module,
+        plugin,
+        connection,
+        session_key,
+        session_id,
+        request_id="req-sel-1",
+        action=action,
+    )
+    assert result.status == protocol.ApplyResultStatus.CONFIRMED
+
+    device_id = protocol.derive_domoticz_target_id(cap.source)
+    device = domoticz.devices[device_id]
+    unit = device.Units[1]
+    assert unit.Type == 244
+    assert unit.SubType == 73
+    assert unit.SwitchType == 18
+    assert unit.Options["LevelNames"] == "Off|off|heat|cool"
+    assert unit.Options["LevelOffHidden"] == "true"
+    assert unit.nValue == 2
+    assert unit.sValue == "20"
+
+    # 2. Update selector options dynamically (single direction from HA)
+    cap2 = protocol.Capability(
+        source=protocol.SourceIdentity(
+            "home_assistant", "instance-1", "select.mode", "state"
+        ),
+        kind=protocol.CapabilityKind.TEXT,
+        name="Mode Selector",
+        value="auto",
+        semantic="selector",
+        options=("off", "heat", "cool", "auto"),
+    )
+    action2 = protocol.ReconciliationAction(
+        kind=protocol.ReconciliationActionKind.UPDATE,
+        capability=cap2,
+        target_id=device_id,
+    )
+    result2 = _send_binary_apply(
+        module,
+        plugin,
+        connection,
+        session_key,
+        session_id,
+        request_id="req-sel-2",
+        action=action2,
+    )
+    assert result2.status == protocol.ApplyResultStatus.CONFIRMED
+
+    unit = device.Units[1]
+    assert unit.Options["LevelNames"] == "Off|off|heat|cool|auto"
+    assert unit.nValue == 2
+    assert unit.sValue == "40"
+
+
+def test_selector_on_command_set_level_sends_control(loaded_plugin):
+    """onCommand with Set Level sends signed control request."""
+    module, domoticz = loaded_plugin
+    protocol = module.wire_protocol
+    plugin, connection = _start_and_upgrade(module)
+    session_key, session_id = _complete_handshake(
+        module,
+        plugin,
+        connection,
+        server_features=(protocol.FEATURE_DOMOTICZ_CONTROL_V1,),
+    )
+    module._plugin = plugin
+
+    module.Domoticz.Unit(
+        Name="Mode Selector",
+        DeviceID="device-selector",
+        Unit=1,
+        Type=244,
+        Subtype=73,
+        Switchtype=18,
+        Options={"LevelNames": "Off|off|heat|cool", "LevelOffHidden": "true"},
+    ).Create()
+    unit = domoticz.devices["device-selector"].Units[1]
+    unit.nValue = 2
+    unit.sValue = "20"
+
+    # User clicks Level 30 ("cool") in Domoticz UI
+    module.onCommand("device-selector", 1, "Set Level", 30, "")
+    signed = protocol.canonical_json_loads(connection.sent[-1]["Payload"])
+    env = protocol.verify_envelope(
+        session_key,
+        signed,
+        protocol_version=plugin._protocol_version,
+        expected_direction=protocol.DIRECTION_DOMOTICZ_TO_HA,
+        expected_session_id=session_id,
+        last_sequence=1,
+    )
+    data = env.payload
+    assert data["type"] == "control_request"
+    assert data["target_id"] == "device-selector"
+    assert data["unit"] == 1
+    assert data["command"] == "Set Level"
+    assert data["level"] == 30.0
+
+    # Simulate HA rejecting the command
+    rej = protocol.build_control_result(
+        plugin._protocol_selection,
+        request_id=data["request_id"],
+        status=protocol.ControlResultStatus.REJECTED,
+        error="option not selectable",
+    )
+    rej_signed = protocol.sign_envelope(
+        session_key,
+        protocol_version=plugin._protocol_version,
+        direction=protocol.DIRECTION_HA_TO_DOMOTICZ,
+        session_id=session_id,
+        sequence=2,
+        payload=rej,
+    )
+    plugin.onMessage(
+        connection,
+        {
+            "Payload": protocol.canonical_json_dumps(rej_signed),
+            "Finish": True,
+        },
+    )
+
+    # Unit should be reverted back to prior state (2, "20")
+    assert unit.updates[-1]["nValue"] == 2
+    assert unit.updates[-1]["sValue"] == "20"
+    assert (
+        domoticz.errors[-1] == "Home Assistant rejected command: option not selectable"
+    )
+
+
+def test_selector_unavailable_preserves_options(loaded_plugin):
+    """Marking selector unavailable sets TimedOut=1 and keeps Options intact."""
+    module, domoticz = loaded_plugin
+    protocol = module.wire_protocol
+    plugin, connection = _start_and_upgrade(module)
+    session_key, session_id = _complete_handshake(
+        module,
+        plugin,
+        connection,
+        server_features=(protocol.FEATURE_HA_EXPORT_BINARY_V1,),
+    )
+
+    cap = protocol.Capability(
+        source=protocol.SourceIdentity(
+            "home_assistant", "instance-1", "select.mode", "state"
+        ),
+        kind=protocol.CapabilityKind.TEXT,
+        name="Mode Selector",
+        value="heat",
+        semantic="selector",
+        options=("off", "heat", "cool"),
+    )
+    action = protocol.ReconciliationAction(
+        kind=protocol.ReconciliationActionKind.CREATE,
+        capability=cap,
+    )
+    _send_binary_apply(
+        module,
+        plugin,
+        connection,
+        session_key,
+        session_id,
+        request_id="req-avail",
+        action=action,
+    )
+    device_id = protocol.derive_domoticz_target_id(cap.source)
+    device = domoticz.devices[device_id]
+    assert device.TimedOut == 0
+    assert device.Units[1].Options["LevelNames"] == "Off|off|heat|cool"
+
+    # Now mark unavailable
+    unavail_cap = protocol.Capability(
+        source=cap.source,
+        kind=protocol.CapabilityKind.TEXT,
+        name="Mode Selector",
+        value=None,
+        availability=protocol.Availability.UNAVAILABLE,
+        semantic="selector",
+        options=("off", "heat", "cool"),
+    )
+    unavail_action = protocol.ReconciliationAction(
+        kind=protocol.ReconciliationActionKind.MARK_UNAVAILABLE,
+        capability=unavail_cap,
+        target_id=device_id,
+    )
+    res = _send_binary_apply(
+        module,
+        plugin,
+        connection,
+        session_key,
+        session_id,
+        request_id="req-unavail",
+        action=unavail_action,
+    )
+    assert res.status == protocol.ApplyResultStatus.CONFIRMED
+    assert device.TimedOut == 1
+    assert device.Units[1].Options["LevelNames"] == "Off|off|heat|cool"
+
+
 def test_plugin_python_39_compatibility_and_isolated_dependencies():
     plugin_path = ROOT / "plugin.py"
     with open(plugin_path, encoding="utf-8") as f:

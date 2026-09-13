@@ -1701,6 +1701,38 @@ async def test_handle_control_request_light_cover_button(
     )
     hass.states.async_set(button_entry.entity_id, "2026-09-13T10:00:00")
 
+    vacuum_entry = registry.async_get_or_create(
+        "vacuum",
+        "integration_test",
+        "vacuum-1",
+        suggested_object_id="test_vacuum",
+    )
+    hass.states.async_set(vacuum_entry.entity_id, "docked")
+
+    select_entry = registry.async_get_or_create(
+        "select",
+        "integration_test",
+        "select-1",
+        suggested_object_id="test_select",
+    )
+    hass.states.async_set(
+        select_entry.entity_id,
+        "heat",
+        {"options": ["off", "heat", "cool"]},
+    )
+
+    input_select_entry = registry.async_get_or_create(
+        "input_select",
+        "integration_test",
+        "input_select-1",
+        suggested_object_id="test_input_select",
+    )
+    hass.states.async_set(
+        input_select_entry.entity_id,
+        "Home",
+        {"options": ["Home", "Away", "Night"]},
+    )
+
     calls: list[tuple[str, str, dict[str, object]]] = []
 
     def _record(d: str, s: str, data: dict[str, object]) -> None:
@@ -1725,6 +1757,36 @@ async def test_handle_control_request_light_cover_button(
         "button",
         "press",
         lambda c: _record("button", "press", dict(c.data)),
+    )
+    hass.services.async_register(
+        "vacuum",
+        "start",
+        lambda c: _record("vacuum", "start", dict(c.data)),
+    )
+    hass.services.async_register(
+        "vacuum",
+        "return_to_base",
+        lambda c: _record("vacuum", "return_to_base", dict(c.data)),
+    )
+    hass.services.async_register(
+        "vacuum",
+        "pause",
+        lambda c: _record("vacuum", "pause", dict(c.data)),
+    )
+    hass.services.async_register(
+        "vacuum",
+        "stop",
+        lambda c: _record("vacuum", "stop", dict(c.data)),
+    )
+    hass.services.async_register(
+        "select",
+        "select_option",
+        lambda c: _record("select", "select_option", dict(c.data)),
+    )
+    hass.services.async_register(
+        "input_select",
+        "select_option",
+        lambda c: _record("input_select", "select_option", dict(c.data)),
     )
 
     manager = DomoticzBridgeManager()
@@ -1754,6 +1816,34 @@ async def test_handle_control_request_light_cover_button(
             kind=CapabilityKind.BINARY,
             name="Test Button",
             value=True,
+        ),
+        "target-vacuum": Capability(
+            source=SourceIdentity(
+                "home_assistant", "instance-1", vacuum_entry.id, "state"
+            ),
+            kind=CapabilityKind.BINARY,
+            name="Test Vacuum",
+            value=False,
+        ),
+        "target-select": Capability(
+            source=SourceIdentity(
+                "home_assistant", "instance-1", select_entry.id, "state"
+            ),
+            kind=CapabilityKind.TEXT,
+            name="Test Select",
+            value="heat",
+            semantic="selector",
+            options=("off", "heat", "cool"),
+        ),
+        "target-input-select": Capability(
+            source=SourceIdentity(
+                "home_assistant", "instance-1", input_select_entry.id, "state"
+            ),
+            kind=CapabilityKind.TEXT,
+            name="Test Input Select",
+            value="Home",
+            semantic="selector",
+            options=("Home", "Away", "Night"),
         ),
     }
 
@@ -1866,6 +1956,260 @@ async def test_handle_control_request_light_cover_button(
         "button",
         "press",
         {"entity_id": button_entry.entity_id},
+    )
+
+    # Vacuum start / On
+    req_vac_start = ControlRequest(
+        request_id="req-vac-1",
+        target_id="target-vacuum",
+        unit=1,
+        command="On",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_start)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "start",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    # Vacuum dock / Off
+    req_vac_off = ControlRequest(
+        request_id="req-vac-2",
+        target_id="target-vacuum",
+        unit=1,
+        command="Off",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_off)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "return_to_base",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    # Vacuum pause
+    req_vac_pause = ControlRequest(
+        request_id="req-vac-3",
+        target_id="target-vacuum",
+        unit=1,
+        command="pause",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_pause)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "pause",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    # Vacuum stop
+    req_vac_stop = ControlRequest(
+        request_id="req-vac-4",
+        target_id="target-vacuum",
+        unit=1,
+        command="stop",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_stop)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "stop",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    # Vacuum toggle when docked (off) -> start
+    hass.states.async_set(vacuum_entry.entity_id, "docked")
+    req_vac_toggle = ControlRequest(
+        request_id="req-vac-5",
+        target_id="target-vacuum",
+        unit=1,
+        command="toggle",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_toggle)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "start",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    # Vacuum toggle when cleaning (on) -> return_to_base
+    hass.states.async_set(vacuum_entry.entity_id, "cleaning")
+    res = await manager._async_handle_control_request(session, req_vac_toggle)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "return_to_base",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    # Vacuum selector levels
+    req_vac_lvl10 = ControlRequest(
+        request_id="req-vac-6",
+        target_id="target-vacuum",
+        unit=1,
+        command="Set Level",
+        level=10.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_lvl10)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "start",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    req_vac_lvl20 = ControlRequest(
+        request_id="req-vac-7",
+        target_id="target-vacuum",
+        unit=1,
+        command="Set Level",
+        level=20.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_lvl20)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "pause",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    req_vac_lvl30 = ControlRequest(
+        request_id="req-vac-8",
+        target_id="target-vacuum",
+        unit=1,
+        command="Set Level",
+        level=30.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_lvl30)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "return_to_base",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    req_vac_lvl40 = ControlRequest(
+        request_id="req-vac-9",
+        target_id="target-vacuum",
+        unit=1,
+        command="Set Level",
+        level=40.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_lvl40)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "vacuum",
+        "stop",
+        {"entity_id": vacuum_entry.entity_id},
+    )
+
+    req_vac_bad_lvl = ControlRequest(
+        request_id="req-vac-10",
+        target_id="target-vacuum",
+        unit=1,
+        command="Set Level",
+        level=99.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_vac_bad_lvl)
+    assert res["status"] == "rejected"
+    assert res["error"] == "selector level is not supported"
+
+    # Select: Set Level 10 -> "off"
+    req_sel_lvl10 = ControlRequest(
+        request_id="req-sel-1",
+        target_id="target-select",
+        unit=1,
+        command="Set Level",
+        level=10.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_sel_lvl10)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "select",
+        "select_option",
+        {"entity_id": select_entry.entity_id, "option": "off"},
+    )
+
+    # Select: Set Level 20 -> "heat"
+    req_sel_lvl20 = ControlRequest(
+        request_id="req-sel-2",
+        target_id="target-select",
+        unit=1,
+        command="Set Level",
+        level=20.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_sel_lvl20)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "select",
+        "select_option",
+        {"entity_id": select_entry.entity_id, "option": "heat"},
+    )
+
+    # Select: select_option command -> "cool"
+    req_sel_cmd = ControlRequest(
+        request_id="req-sel-3",
+        target_id="target-select",
+        unit=1,
+        command="select_option",
+        level=0.0,
+        color="cool",
+    )
+    res = await manager._async_handle_control_request(session, req_sel_cmd)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "select",
+        "select_option",
+        {"entity_id": select_entry.entity_id, "option": "cool"},
+    )
+
+    # Select: invalid level -> rejected
+    req_sel_bad_lvl = ControlRequest(
+        request_id="req-sel-4",
+        target_id="target-select",
+        unit=1,
+        command="Set Level",
+        level=50.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_sel_bad_lvl)
+    assert res["status"] == "rejected"
+    assert res["error"] == "selector level is not supported"
+
+    # Input Select: Set Level 20 -> "Away"
+    req_insel_lvl20 = ControlRequest(
+        request_id="req-insel-1",
+        target_id="target-input-select",
+        unit=1,
+        command="Set Level",
+        level=20.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_insel_lvl20)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "input_select",
+        "select_option",
+        {"entity_id": input_select_entry.entity_id, "option": "Away"},
     )
 
     # Invalid command on button

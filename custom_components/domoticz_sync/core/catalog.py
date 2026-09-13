@@ -24,7 +24,7 @@ _PREVIOUS_CATALOG_SCHEMA_VERSION = 2
 _ROOT_KEYS = {"version", "targets"}
 _TARGET_KEYS_V2 = {"target_id", "capability", "stale"}
 _TARGET_KEYS_V3 = _TARGET_KEYS_V2 | {"pending"}
-_CAPABILITY_KEYS = {
+_CAPABILITY_KEYS_LEGACY = {
     "source",
     "kind",
     "name",
@@ -34,6 +34,7 @@ _CAPABILITY_KEYS = {
     "unit",
     "state_class",
 }
+_CAPABILITY_KEYS = _CAPABILITY_KEYS_LEGACY | {"options"}
 _COMPOUND_CAPABILITY_KEYS = {
     "source",
     "kind",
@@ -83,6 +84,7 @@ def _capability_to_dict(
         "semantic": capability.semantic,
         "unit": capability.unit,
         "state_class": capability.state_class,
+        "options": list(capability.options) if capability.options is not None else None,
     }
 
 
@@ -257,7 +259,18 @@ def _capability_from_dict(data: object) -> Union[Capability, CompoundCapability]
         )
 
     # Standard Capability
-    _require_object(data, _CAPABILITY_KEYS)
+    if isinstance(data, dict) and set(data) == _CAPABILITY_KEYS_LEGACY:
+        options = None
+    else:
+        _require_object(data, _CAPABILITY_KEYS)
+        raw_options = data["options"]
+        if raw_options is not None:
+            if not isinstance(raw_options, list):
+                raise TypeError("options must be a list or None")
+            options = tuple(raw_options)
+        else:
+            options = None
+
     source_data = data["source"]
     _require_object(source_data, _SOURCE_KEYS)
     source = SourceIdentity(
@@ -275,6 +288,7 @@ def _capability_from_dict(data: object) -> Union[Capability, CompoundCapability]
         semantic=data["semantic"],
         unit=data["unit"],
         state_class=data["state_class"],
+        options=options,
     )
 
 

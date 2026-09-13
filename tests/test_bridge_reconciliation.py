@@ -550,8 +550,14 @@ def _configure_application(
         assert included_kinds == expected_kinds
         return ExportCollection(tuple(capabilities), tuple(exclusions))
 
-    expected_kinds = included_kinds | (
-        {CapabilityKind.COMPOUND} if CapabilityKind.NUMERIC in included_kinds else set()
+    expected_kinds = (
+        included_kinds
+        | (
+            {CapabilityKind.COMPOUND}
+            if CapabilityKind.NUMERIC in included_kinds
+            else set()
+        )
+        | ({CapabilityKind.TEXT} if CapabilityKind.BINARY in included_kinds else set())
     )
     monkeypatch.setattr(app_module, "collect_export_selection", collect)
 

@@ -72,6 +72,7 @@ class Capability:
     semantic: Optional[str] = None
     unit: Optional[str] = None
     state_class: Optional[str] = None
+    options: Optional[Tuple[str, ...]] = None
 
     def __post_init__(self) -> None:
         """Keep invalid or ambiguous values out of platform adapters."""
@@ -99,6 +100,21 @@ class Capability:
             raise ValueError("only numeric capabilities may have a unit")
         if self.kind is not CapabilityKind.NUMERIC and self.state_class is not None:
             raise ValueError("only numeric capabilities may have a state_class")
+
+        if self.options is not None:
+            if type(self.options) is not tuple:
+                raise TypeError("options must be a tuple of strings or None")
+            if not self.options:
+                raise ValueError("options must not be empty if provided")
+            for option in self.options:
+                if not isinstance(option, str):
+                    raise TypeError("each option in options must be a string")
+                if not option.strip():
+                    raise ValueError("option must not be empty")
+                if option != option.strip():
+                    raise ValueError("option must not have surrounding whitespace")
+            if len(set(self.options)) != len(self.options):
+                raise ValueError("options must be unique")
 
         if self.availability is not Availability.AVAILABLE:
             if self.value is not None:
@@ -184,6 +200,11 @@ class CompoundCapability:
     @property
     def state_class(self) -> Optional[str]:
         """Compound capabilities do not have a single state class."""
+        return None
+
+    @property
+    def options(self) -> Optional[Tuple[str, ...]]:
+        """Compound capabilities do not have a single options list."""
         return None
 
     @property

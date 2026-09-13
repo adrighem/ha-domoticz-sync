@@ -41,6 +41,7 @@ from custom_components.domoticz_sync.const import (  # noqa: E402
 )
 from custom_components.domoticz_sync.core import (  # noqa: E402
     Availability,
+    Capability,
     CapabilityKind,
     CompoundCapability,
 )
@@ -1041,3 +1042,159 @@ def test_controllable_domoticz_mirrors_are_excluded_from_export(
     assert (
         exclusions.get(light_mirror.entity_id) == ExportExclusionReason.DOMOTICZ_MIRROR
     )
+
+
+def test_collects_labelled_vacuum_states(hass: HomeAssistant) -> None:
+    """Labelled vacuum entities export cleaning as True and docked/idle as False."""
+    entry = _register_entity(hass, "vacuum", "juffrouw_mier", platform="roomba")
+
+    hass.states.async_set(entry.entity_id, "docked")
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    assert collection.capabilities[0].value is False
+    assert collection.capabilities[0].availability is Availability.AVAILABLE
+    assert collection.capabilities[0].kind is CapabilityKind.BINARY
+
+    hass.states.async_set(entry.entity_id, "cleaning")
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    assert collection.capabilities[0].value is True
+    assert collection.capabilities[0].availability is Availability.AVAILABLE
+
+    hass.states.async_set(entry.entity_id, "paused")
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    assert collection.capabilities[0].value is False
+
+    hass.states.async_set(entry.entity_id, "returning")
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    assert collection.capabilities[0].value is False
+
+    hass.states.async_set(entry.entity_id, STATE_UNAVAILABLE)
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    assert collection.capabilities[0].value is None
+    assert collection.capabilities[0].availability is Availability.UNAVAILABLE
+
+
+def test_vacuum_domoticz_mirror_is_excluded_from_export(
+    hass: HomeAssistant,
+) -> None:
+    """Vacuum entity originating from Domoticz is excluded from export."""
+    vacuum_mirror = _register_entity(
+        hass,
+        "vacuum",
+        "domoticz_vacuum",
+        platform="domoticz_sync",
+    )
+    hass.states.async_set(
+        vacuum_mirror.entity_id,
+        "docked",
+        {"domoticz_idx": "99", "domoticz_sync_origin": "domoticz"},
+    )
+
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 0
+    exclusions = {e.entity_id: e.reason for e in collection.exclusions}
+    assert (
+        exclusions.get(vacuum_mirror.entity_id) == ExportExclusionReason.DOMOTICZ_MIRROR
+    )
+
+
+def test_select_entities_are_exported_with_options(hass: HomeAssistant) -> None:
+    """Select entities are exported as text capability with selector semantic."""
+    entry = _register_entity(hass, "select", "climate_mode")
+    hass.states.async_set(
+        entry.entity_id,
+        "heat",
+        {"options": ["off", "heat", "cool", "auto"]},
+    )
+
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    cap = collection.capabilities[0]
+    assert isinstance(cap, Capability)
+    assert cap.kind == CapabilityKind.TEXT
+    assert cap.semantic == "selector"
+    assert cap.value == "heat"
+    assert cap.options == ("off", "heat", "cool", "auto")
+    assert cap.availability is Availability.AVAILABLE
+
+
+def test_input_select_entities_are_exported_with_options(
+    hass: HomeAssistant,
+) -> None:
+    """Input select entities are exported as text capability with selector semantic."""
+    entry = _register_entity(hass, "input_select", "house_mode")
+    hass.states.async_set(
+        entry.entity_id,
+        "Home",
+        {"options": ["Home", "Away", "Night", "Vacation"]},
+    )
+
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    cap = collection.capabilities[0]
+    assert isinstance(cap, Capability)
+    assert cap.kind == CapabilityKind.TEXT
+    assert cap.semantic == "selector"
+    assert cap.value == "Home"
+    assert cap.options == ("Home", "Away", "Night", "Vacation")
+    assert cap.availability is Availability.AVAILABLE
+
+
+def test_selector_without_options_is_excluded(hass: HomeAssistant) -> None:
+    """Selector entity lacking options attribute is safely excluded."""
+    entry = _register_entity(hass, "select", "empty_options")
+    hass.states.async_set(entry.entity_id, "unknown", {})
+
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 0
+    exclusions = {e.entity_id: e.reason for e in collection.exclusions}
+    assert (
+        exclusions.get(entry.entity_id)
+        == ExportExclusionReason.MISSING_SELECTOR_OPTIONS
+    )
+
+
+def test_selector_single_direction_options_update(hass: HomeAssistant) -> None:
+    """Updating selector options attribute updates exported capability options."""
+    entry = _register_entity(hass, "select", "profile_mode")
+    hass.states.async_set(
+        entry.entity_id,
+        "eco",
+        {"options": ["eco", "comfort"]},
+    )
+
+    collection1 = collect_export_selection(hass, instance_id="ha-instance")
+    assert collection1.capabilities[0].options == ("eco", "comfort")
+
+    # HA updates options (e.g. new firmware adds boost option)
+    hass.states.async_set(
+        entry.entity_id,
+        "eco",
+        {"options": ["eco", "comfort", "boost"]},
+    )
+    collection2 = collect_export_selection(hass, instance_id="ha-instance")
+    assert collection2.capabilities[0].options == ("eco", "comfort", "boost")
+
+
+def test_selector_pipe_sanitization_and_max_options(hass: HomeAssistant) -> None:
+    """Pipe characters in options are sanitized to slashes and options capped at 30."""
+    entry = _register_entity(hass, "select", "mode_complex")
+    raw_options = [f"Opt | {i}" for i in range(35)]
+    hass.states.async_set(
+        entry.entity_id,
+        "Opt / 0",
+        {"options": raw_options},
+    )
+
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+    assert len(collection.capabilities) == 1
+    cap = collection.capabilities[0]
+    assert isinstance(cap, Capability)
+    assert len(cap.options) == 30
+    assert cap.options[0] == "Opt / 0"
+    assert cap.options[1] == "Opt / 1"
+    assert all("|" not in opt for opt in cap.options)

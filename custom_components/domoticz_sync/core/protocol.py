@@ -152,6 +152,7 @@ _CAPABILITY_KEYS = {
     "semantic",
     "unit",
     "state_class",
+    "options",
 }
 _COMPOUND_CAPABILITY_KEYS = {
     "source",
@@ -251,7 +252,7 @@ _NUMERIC_EXPORT_CODEC = _ExportCodec(
 )
 _BINARY_EXPORT_CODEC = _ExportCodec(
     feature=FEATURE_HA_EXPORT_BINARY_V1,
-    capability_kinds=(CapabilityKind.BINARY,),
+    capability_kinds=(CapabilityKind.BINARY, CapabilityKind.TEXT),
     request_type="binary_apply",
     result_type="binary_apply_result",
 )
@@ -2338,6 +2339,7 @@ def _capability_to_dict(
         "semantic": capability.semantic,
         "unit": capability.unit,
         "state_class": capability.state_class,
+        "options": list(capability.options) if capability.options is not None else None,
     }
 
 
@@ -2366,6 +2368,14 @@ def _capability_from_dict(document: object) -> Union[Capability, CompoundCapabil
         )
 
     _require_exact_object(document, _CAPABILITY_KEYS)
+    raw_options = document["options"]
+    if raw_options is not None:
+        if not isinstance(raw_options, list):
+            raise TypeError("options must be a list or None")
+        options = tuple(raw_options)
+    else:
+        options = None
+
     return Capability(
         source=_source_from_dict(document["source"]),
         kind=CapabilityKind(document["kind"]),
@@ -2375,6 +2385,7 @@ def _capability_from_dict(document: object) -> Union[Capability, CompoundCapabil
         semantic=document["semantic"],
         unit=document["unit"],
         state_class=document["state_class"],
+        options=options,
     )
 
 

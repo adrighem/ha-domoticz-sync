@@ -100,6 +100,7 @@ class ExportExclusionReason(StrEnum):
     INVALID_NUMERIC_STATE = "sensor state is not a finite number"
     MISSING_NUMERIC_METADATA = "unknown or unavailable sensor lacks numeric metadata"
     INVALID_BINARY_STATE = "binary sensor state is invalid"
+    MISSING_SELECTOR_OPTIONS = "selector lacks options metadata"
     CAPABILITY_KIND_NOT_ENABLED = "entity type is not enabled for export"
 
 
@@ -408,6 +409,9 @@ def _capability_from_entry(
         else er.async_get_full_entity_name(hass, entry) or entry.entity_id
     )
 
+    if entry.domain in {"select", "input_select"}:
+        return _selector_capability(source, name, state)
+
     if (
         entry.domain == _BINARY_SENSOR_DOMAIN
         or entry.domain in CONTROLLABLE_EXPORT_DOMAINS
@@ -492,6 +496,57 @@ def _group_temperature_humidity_capabilities(
     ] + compounds
 
 
+def _selector_capability(
+    source: SourceIdentity,
+    name: str,
+    state: State | None,
+) -> tuple[Capability | None, ExportExclusionReason | None]:
+    """Convert a selector entity (select or input_select)."""
+    attributes = state.attributes if state is not None else {}
+    raw_options = attributes.get("options")
+    if not isinstance(raw_options, (list, tuple)) or not raw_options:
+        return None, ExportExclusionReason.MISSING_SELECTOR_OPTIONS
+
+    cleaned_options: list[str] = []
+    for opt in raw_options:
+        if not isinstance(opt, str) or not opt.strip():
+            continue
+        sanitized = opt.replace("|", "/").strip()
+        if sanitized and sanitized not in cleaned_options:
+            cleaned_options.append(sanitized)
+
+    if not cleaned_options:
+        return None, ExportExclusionReason.MISSING_SELECTOR_OPTIONS
+
+    options = tuple(cleaned_options[:30])
+
+    if state is None or state.state == STATE_UNAVAILABLE:
+        availability = Availability.UNAVAILABLE
+        value = None
+    elif state.state == STATE_UNKNOWN:
+        availability = Availability.UNKNOWN
+        value = None
+    else:
+        current_state = state.state.replace("|", "/").strip()
+        if current_state not in options:
+            options = (current_state, *options)[:30]
+        availability = Availability.AVAILABLE
+        value = current_state
+
+    return (
+        Capability(
+            source=source,
+            kind=CapabilityKind.TEXT,
+            name=name,
+            value=value,
+            availability=availability,
+            semantic="selector",
+            options=options,
+        ),
+        None,
+    )
+
+
 def _binary_capability(
     source: SourceIdentity,
     name: str,
@@ -505,10 +560,10 @@ def _binary_capability(
     elif state.state == STATE_UNKNOWN:
         availability = Availability.UNKNOWN
         value = None
-    elif state.state == STATE_ON:
+    elif state.state in {STATE_ON, "cleaning"}:
         availability = Availability.AVAILABLE
         value = True
-    elif state.state == STATE_OFF:
+    elif state.state in {STATE_OFF, "docked", "idle", "paused", "returning"}:
         availability = Availability.AVAILABLE
         value = False
     else:
