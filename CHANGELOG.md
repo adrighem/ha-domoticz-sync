@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 Release Please maintains this file from Conventional Commit messages.
 
+## [0.7.0](https://github.com/adrighem/ha-domoticz-sync/compare/v0.6.2...v0.7.0) (2026-09-13)
+
+
+### Features
+
+* support controllable entities and bidirectional sync safety ([2095a10](https://github.com/adrighem/ha-domoticz-sync/commit/2095a1046d1f9aae91f4f657a59fb69d7bfc45de))
+* support selector entities with bidirectional control and dynamic options sync ([02b6957](https://github.com/adrighem/ha-domoticz-sync/commit/02b6957ab68f9fcc24f533bd8c9d5273b925d66d))
+
 ## [0.6.2](https://github.com/adrighem/ha-domoticz-sync/compare/v0.6.1...v0.6.2) (2026-08-02)
 
 
