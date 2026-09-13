@@ -14,6 +14,8 @@ from custom_components.domoticz_sync.api import (
     DomoticzApiError,
     DomoticzAuthError,
     DomoticzConnectionError,
+    DomoticzDeviceUnavailableError,
+    DomoticzTimeoutError,
     normalize_base_url,
 )
 
@@ -198,3 +200,163 @@ def test_domoticz_application_error():
     except DomoticzApiError:
         return
     raise AssertionError("Expected DomoticzApiError")
+
+
+def test_switch_command_success():
+    """Test switch command transmits expected URL parameters."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SwitchLight"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_switch_command("42", "On"))
+
+    kwargs = session.get.call_args.kwargs
+    params = kwargs["params"]
+    assert params["param"] == "switchlight"
+    assert params["idx"] == "42"
+    assert params["switchcmd"] == "On"
+
+
+def test_switch_command_validation():
+    """Test switch command rejects invalid command and empty idx."""
+    session = MagicMock()
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    with pytest.raises(DomoticzApiError, match="Invalid switch command"):
+        asyncio.run(api.async_switch_command("42", "Invalid"))
+
+    with pytest.raises(DomoticzApiError, match="Invalid device idx"):
+        asyncio.run(api.async_switch_command("", "On"))
+
+
+def test_set_level_command():
+    """Test set level command transmits rounded percentage level."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SwitchLight"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_set_level("42", 75.4))
+
+    kwargs = session.get.call_args.kwargs
+    params = kwargs["params"]
+    assert params["param"] == "switchlight"
+    assert params["idx"] == "42"
+    assert params["switchcmd"] == "Set Level"
+    assert params["level"] == "75"
+
+
+def test_set_level_clamping():
+    """Test set level clamps values outside 0-100."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SwitchLight"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_set_level("42", 150))
+    assert session.get.call_args.kwargs["params"]["level"] == "100"
+
+    asyncio.run(api.async_set_level("42", -20))
+    assert session.get.call_args.kwargs["params"]["level"] == "0"
+
+
+def test_set_color_command():
+    """Test set color transmits JSON color structure and brightness."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SetColBrightnessValue"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_set_color("42", rgb=(255, 128, 0), brightness=80))
+
+    kwargs = session.get.call_args.kwargs
+    params = kwargs["params"]
+    assert params["param"] == "setcolbrightnessvalue"
+    assert params["idx"] == "42"
+    assert params["brightness"] == "80"
+    assert (
+        '{"m": 3, "t": 0, "r": 255, "g": 128, "b": 0, "cw": 0, "ww": 0}'
+        in params["color"]
+    )
+
+
+def test_set_color_pure_brightness_fallback():
+    """Test set color with only brightness delegates to set level."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SwitchLight"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_set_color("42", brightness=60))
+
+    kwargs = session.get.call_args.kwargs
+    params = kwargs["params"]
+    assert params["param"] == "switchlight"
+    assert params["switchcmd"] == "Set Level"
+    assert params["level"] == "60"
+
+
+def test_blind_command():
+    """Test blind control actions."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SwitchLight"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_blind_command("42", "Open"))
+    assert session.get.call_args.kwargs["params"]["switchcmd"] == "Open"
+
+    asyncio.run(api.async_blind_command("42", "Close"))
+    assert session.get.call_args.kwargs["params"]["switchcmd"] == "Close"
+
+    asyncio.run(api.async_blind_command("42", "Stop"))
+    assert session.get.call_args.kwargs["params"]["switchcmd"] == "Stop"
+
+    with pytest.raises(DomoticzApiError, match="Invalid blind action"):
+        asyncio.run(api.async_blind_command("42", "Jump"))
+
+
+def test_scene_command():
+    """Test scene activation."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "OK", "title": "SwitchScene"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    asyncio.run(api.async_scene_command("5", "On"))
+
+    kwargs = session.get.call_args.kwargs
+    params = kwargs["params"]
+    assert params["param"] == "switchscene"
+    assert params["idx"] == "5"
+    assert params["switchcmd"] == "On"
+
+
+def test_timeout_classified_as_domoticz_timeout_error():
+    """Test timeout error is classified as DomoticzTimeoutError."""
+    session = MagicMock()
+    session.get.side_effect = TimeoutError("Connection timed out")
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    with pytest.raises(DomoticzTimeoutError, match="Timed out"):
+        asyncio.run(api.async_get_server_time())
+
+
+def test_device_unavailable_classified_as_domoticz_device_unavailable_error():
+    """Test Domoticz error for unknown idx is classified as device unavailable."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(
+        json_data={"status": "ERROR", "message": "Device not found for idx: 999"}
+    )
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    with pytest.raises(DomoticzDeviceUnavailableError, match="Device not found"):
+        asyncio.run(api.async_switch_command("999", "On"))

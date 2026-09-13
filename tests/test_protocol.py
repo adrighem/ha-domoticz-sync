@@ -62,7 +62,11 @@ from custom_components.domoticz_sync.core.protocol import (
     build_binary_apply_result,
     build_challenge,
     build_control,
+    build_control_color,
+    build_control_cover,
+    build_control_level,
     build_control_result,
+    build_control_switch,
     build_hello,
     build_inventory_request,
     build_inventory_result,
@@ -3040,3 +3044,34 @@ def test_control_result_validation() -> None:
     # Rejected with empty string error is invalid
     with pytest.raises(ValueError, match="rejected control results"):
         ControlResult("req-1", ControlResultStatus.REJECTED, error="   ")
+
+
+def test_control_convenience_builders() -> None:
+    """Convenience builders generate expected control request documents."""
+    selection = _control_selection()
+
+    # Switch on/off
+    on_req = build_control_switch(selection, "req-1", "target-1", on=True)
+    assert on_req["command"] == "On"
+    assert on_req["unit"] == 1
+    assert on_req["level"] == 0.0
+
+    off_req = build_control_switch(selection, "req-2", "target-1", on=False)
+    assert off_req["command"] == "Off"
+
+    # Level
+    lvl_req = build_control_level(selection, "req-3", "target-1", level=42.0)
+    assert lvl_req["command"] == "Set Level"
+    assert lvl_req["level"] == 42.0
+
+    # Color
+    color_req = build_control_color(
+        selection, "req-4", "target-1", color='{"r": 255, "g": 0, "b": 0}', level=80.0
+    )
+    assert color_req["command"] == "Set Color"
+    assert color_req["color"] == '{"r": 255, "g": 0, "b": 0}'
+    assert color_req["level"] == 80.0
+
+    # Cover
+    cover_req = build_control_cover(selection, "req-5", "target-1", action="Open")
+    assert cover_req["command"] == "Open"

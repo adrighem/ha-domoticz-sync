@@ -433,6 +433,10 @@ Passive binary sensors and all other source domains reject control requests.
    the service again. Reusing a request ID with different content closes the
    session as a protocol violation.
 5. **Safe Fail-Closed Errors:** Rejections and failures return detailed, log-safe audit messages without ever leaking any session secrets, pairing keys, or entity attributes.
+6. **Bidirectional State Loop Prevention & Provenance Safeguards:**
+   - Ingest Plane Loop: Devices in Domoticz created by the `HADomoticzSync` companion plugin (identified by HardwareName/HardwareType or `DeviceID` starting with `HA`) are strictly dropped by the Home Assistant coordinator to prevent self-import.
+   - Export Plane Loop: Entities in Home Assistant originating from the `domoticz_sync` integration (bearing `domoticz_sync_origin == "domoticz"` or registered to the platform) are rejected from export with `DOMOTICZ_MIRROR`.
+   - Causal Echo Suppression: When an entity state changes as the direct consequence of an executed reverse command, downstream delta notifications are correlated via the command's causal sequence to prevent ping-pong oscillation.
 
 ### Message Schemas
 

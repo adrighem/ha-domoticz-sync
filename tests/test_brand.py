@@ -3,9 +3,7 @@
 import struct
 from pathlib import Path
 
-BRAND_DIR = (
-    Path(__file__).parents[1] / "custom_components" / "domoticz_sync" / "brand"
-)
+BRAND_DIR = Path(__file__).parents[1] / "custom_components" / "domoticz_sync" / "brand"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_BRAND_ASSET_SIZE = 1024 * 1024
 

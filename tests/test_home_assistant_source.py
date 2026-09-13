@@ -751,9 +751,7 @@ def test_every_sensor_device_class_has_an_explicit_export_decision() -> None:
     excluded_non_numeric = {"date", "enum", "timestamp", "uptime"}
 
     decisions = native_when_metadata_matches | custom_sensor | excluded_non_numeric
-    sensor_device_classes = {
-        device_class.value for device_class in SensorDeviceClass
-    }
+    sensor_device_classes = {device_class.value for device_class in SensorDeviceClass}
 
     assert native_when_metadata_matches.isdisjoint(custom_sensor)
     assert sensor_device_classes <= decisions
@@ -1004,3 +1002,42 @@ async def test_async_collection_uses_stable_home_assistant_instance_id(
         capabilities = await async_collect_export_capabilities(hass)
 
     assert capabilities[0].source.instance_id == "stable-instance-id"
+
+
+def test_controllable_domoticz_mirrors_are_excluded_from_export(
+    hass: HomeAssistant,
+) -> None:
+    """Controllable entities imported from Domoticz cannot be re-exported."""
+    switch_mirror = _register_entity(
+        hass,
+        "switch",
+        "domoticz_living_room_switch",
+        platform="domoticz_sync",
+    )
+    hass.states.async_set(
+        switch_mirror.entity_id,
+        "on",
+        {"domoticz_idx": "42", "domoticz_sync_origin": "domoticz"},
+    )
+    light_mirror = _register_entity(
+        hass,
+        "light",
+        "domoticz_hall_light",
+        platform="domoticz_sync",
+    )
+    hass.states.async_set(
+        light_mirror.entity_id,
+        "on",
+        {"domoticz_idx": "43", "domoticz_sync_origin": "domoticz"},
+    )
+
+    collection = collect_export_selection(hass, instance_id="ha-instance")
+
+    assert len(collection.capabilities) == 0
+    exclusions = {e.entity_id: e.reason for e in collection.exclusions}
+    assert (
+        exclusions.get(switch_mirror.entity_id) == ExportExclusionReason.DOMOTICZ_MIRROR
+    )
+    assert (
+        exclusions.get(light_mirror.entity_id) == ExportExclusionReason.DOMOTICZ_MIRROR
+    )

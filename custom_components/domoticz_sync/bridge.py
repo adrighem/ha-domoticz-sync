@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Final, Protocol
@@ -16,7 +18,7 @@ from .catalog_storage import (
     HomeAssistantCatalogStorage,
 )
 from .const import CONTROLLABLE_EXPORT_DOMAINS, DOMAIN
-from .core import Capability, CapabilityKind, CompoundCapability, catalog_from_document
+from .core import Capability, CompoundCapability, catalog_from_document
 from .core.protocol import (
     DIRECTION_DOMOTICZ_TO_HA,
     DIRECTION_HA_TO_DOMOTICZ,
@@ -77,6 +79,8 @@ AUTHENTICATION_TIMEOUT: Final = 10.0
 INVENTORY_TIMEOUT: Final = 10.0
 HEARTBEAT_INTERVAL: Final = 30.0
 HEARTBEAT_RESPONSE_TIMEOUT: Final = 10.0
+MAX_CONTROLS_PER_WINDOW: Final = 30
+CONTROL_WINDOW_SECONDS: Final = 5.0
 
 _POLICY_CLOSE_MESSAGE: Final = b"Protocol error"
 _PEER_CLOSE_MESSAGE: Final = b"Connection closed"
@@ -134,6 +138,16 @@ class BridgeSession:
     application_task: asyncio.Task[None] | None = field(default=None, repr=False)
     control_results: dict[str, tuple[object, dict[str, object]]] = field(
         default_factory=dict,
+        repr=False,
+    )
+    in_flight_controls: dict[str, tuple[object, asyncio.Future[dict[str, object]]]] = (
+        field(
+            default_factory=dict,
+            repr=False,
+        )
+    )
+    control_timestamps: list[float] = field(
+        default_factory=list,
         repr=False,
     )
 
@@ -230,6 +244,66 @@ class BridgeApplicationSession:
         """Reject use after the application session detaches."""
         if not self._active:
             raise ProtocolError("application session is no longer active")
+
+
+def _parse_domoticz_color(color_str: str) -> dict[str, object] | None:
+    """Parse Domoticz color into Home Assistant light service attributes."""
+    if not color_str:
+        return None
+    raw = color_str.strip()
+    if not raw:
+        return None
+
+    if raw.startswith("{") and raw.endswith("}"):
+        try:
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                m = payload.get("m")
+                t = payload.get("t")
+                if isinstance(t, (int, float)) and t > 0 and m in (1, 2):
+                    return {"color_temp": int(t)}
+
+                r = payload.get("r")
+                g = payload.get("g")
+                b = payload.get("b")
+                if (
+                    isinstance(r, (int, float))
+                    and isinstance(g, (int, float))
+                    and isinstance(b, (int, float))
+                ):
+                    if (
+                        r > 0
+                        or g > 0
+                        or b > 0
+                        or m in (3, 4)
+                        or not (isinstance(t, (int, float)) and t > 0)
+                    ):
+                        return {
+                            "rgb_color": (
+                                max(0, min(255, int(r))),
+                                max(0, min(255, int(g))),
+                                max(0, min(255, int(b))),
+                            )
+                        }
+                if isinstance(t, (int, float)) and t > 0:
+                    return {"color_temp": int(t)}
+        except ValueError, TypeError:
+            pass
+
+    clean = raw.lstrip("#")
+    if len(clean) == 6:
+        try:
+            return {
+                "rgb_color": (
+                    int(clean[0:2], 16),
+                    int(clean[2:4], 16),
+                    int(clean[4:6], 16),
+                )
+            }
+        except ValueError:
+            pass
+
+    return None
 
 
 class DomoticzBridgeManager:
@@ -676,13 +750,60 @@ class DomoticzBridgeManager:
                         if request != cached_request:
                             raise ProtocolError("invalid protocol message")
                     else:
-                        result = await self._async_handle_control_request(
-                            session, request
-                        )
-                        if len(session.control_results) >= MAX_CONTROL_RESULTS:
-                            oldest_request_id = next(iter(session.control_results))
-                            session.control_results.pop(oldest_request_id)
-                        session.control_results[request.request_id] = (request, result)
+                        in_flight = session.in_flight_controls.get(request.request_id)
+                        if in_flight is not None:
+                            in_flight_request, fut = in_flight
+                            if request != in_flight_request:
+                                raise ProtocolError("invalid protocol message")
+                            result = await fut
+                        else:
+                            now = time.monotonic()
+                            session.control_timestamps = [
+                                ts
+                                for ts in session.control_timestamps
+                                if now - ts < CONTROL_WINDOW_SECONDS
+                            ]
+                            if (
+                                len(session.control_timestamps)
+                                >= MAX_CONTROLS_PER_WINDOW
+                            ):
+                                result = build_control_result(
+                                    session.selection,
+                                    request.request_id,
+                                    ControlResultStatus.REJECTED,
+                                    error="rate limit exceeded",
+                                )
+                            else:
+                                session.control_timestamps.append(now)
+                                loop = asyncio.get_running_loop()
+                                fut = loop.create_future()
+                                session.in_flight_controls[request.request_id] = (
+                                    request,
+                                    fut,
+                                )
+                                try:
+                                    result = await self._async_handle_control_request(
+                                        session, request
+                                    )
+                                    fut.set_result(result)
+                                except BaseException as exc:
+                                    if not fut.done():
+                                        fut.set_exception(exc)
+                                    raise
+                                finally:
+                                    session.in_flight_controls.pop(
+                                        request.request_id, None
+                                    )
+
+                                if len(session.control_results) >= MAX_CONTROL_RESULTS:
+                                    oldest_request_id = next(
+                                        iter(session.control_results)
+                                    )
+                                    session.control_results.pop(oldest_request_id)
+                                session.control_results[request.request_id] = (
+                                    request,
+                                    result,
+                                )
                 except Exception:
                     raise ProtocolError("invalid protocol message") from None
                 await self._async_send_payload(session, result)
@@ -897,6 +1018,14 @@ class DomoticzBridgeManager:
                 error="source entity is unavailable",
             )
 
+        if entry.disabled_by is not None:
+            return build_control_result(
+                session.selection,
+                request.request_id,
+                ControlResultStatus.REJECTED,
+                error="source entity is disabled",
+            )
+
         entity_id = entry.entity_id
         if entry.domain not in CONTROLLABLE_EXPORT_DOMAINS:
             return build_control_result(
@@ -906,36 +1035,121 @@ class DomoticzBridgeManager:
                 error="source entity is not controllable",
             )
 
+        current_state = hass.states.get(entity_id)
+        if current_state is None or current_state.state == "unavailable":
+            return build_control_result(
+                session.selection,
+                request.request_id,
+                ControlResultStatus.REJECTED,
+                error="source entity is unavailable",
+            )
+
         # 3. Map command to Home Assistant service
         cmd = request.command.lower()
-        if cmd == "on":
-            domain = "homeassistant"
-            service = "turn_on"
-            data = {"entity_id": entity_id}
-        elif cmd == "off":
-            domain = "homeassistant"
-            service = "turn_off"
-            data = {"entity_id": entity_id}
-        elif cmd in {"set level", "setlevel", "set_level"}:
-            if capability.kind is CapabilityKind.BINARY:
+        if entry.domain in {"switch", "input_boolean"}:
+            if cmd == "on":
+                domain = "homeassistant"
+                service = "turn_on"
+                data = {"entity_id": entity_id}
+            elif cmd == "off":
+                domain = "homeassistant"
+                service = "turn_off"
+                data = {"entity_id": entity_id}
+            elif cmd == "toggle":
+                domain = "homeassistant"
+                service = "toggle"
+                data = {"entity_id": entity_id}
+            else:
                 return build_control_result(
                     session.selection,
                     request.request_id,
                     ControlResultStatus.REJECTED,
                     error="command is not supported",
                 )
-            domain = "homeassistant"
-            service = "turn_on"
-            data = {
-                "entity_id": entity_id,
-                "brightness_pct": int(request.level),
-            }
+
+        elif entry.domain == "light":
+            if cmd == "on":
+                domain = "light"
+                service = "turn_on"
+                data = {"entity_id": entity_id}
+            elif cmd == "off":
+                domain = "light"
+                service = "turn_off"
+                data = {"entity_id": entity_id}
+            elif cmd == "toggle":
+                domain = "light"
+                service = "toggle"
+                data = {"entity_id": entity_id}
+            elif cmd in {"set level", "setlevel", "set_level"}:
+                domain = "light"
+                service = "turn_on"
+                data = {
+                    "entity_id": entity_id,
+                    "brightness_pct": max(0, min(100, int(round(request.level)))),
+                }
+            elif cmd in {"set color", "setcolor", "set_color"}:
+                domain = "light"
+                service = "turn_on"
+                data = {"entity_id": entity_id}
+                if request.level > 0:
+                    data["brightness_pct"] = max(0, min(100, int(round(request.level))))
+                color_data = _parse_domoticz_color(request.color)
+                if color_data is not None:
+                    data.update(color_data)
+            else:
+                return build_control_result(
+                    session.selection,
+                    request.request_id,
+                    ControlResultStatus.REJECTED,
+                    error="command is not supported",
+                )
+
+        elif entry.domain == "cover":
+            if cmd == "open":
+                domain = "cover"
+                service = "open_cover"
+                data = {"entity_id": entity_id}
+            elif cmd == "close":
+                domain = "cover"
+                service = "close_cover"
+                data = {"entity_id": entity_id}
+            elif cmd == "stop":
+                domain = "cover"
+                service = "stop_cover"
+                data = {"entity_id": entity_id}
+            elif cmd in {"set level", "setlevel", "set_level"}:
+                domain = "cover"
+                service = "set_cover_position"
+                data = {
+                    "entity_id": entity_id,
+                    "position": max(0, min(100, int(round(request.level)))),
+                }
+            else:
+                return build_control_result(
+                    session.selection,
+                    request.request_id,
+                    ControlResultStatus.REJECTED,
+                    error="command is not supported",
+                )
+
+        elif entry.domain == "button":
+            if cmd in {"press", "on"}:
+                domain = "button"
+                service = "press"
+                data = {"entity_id": entity_id}
+            else:
+                return build_control_result(
+                    session.selection,
+                    request.request_id,
+                    ControlResultStatus.REJECTED,
+                    error="command is not supported",
+                )
         else:
             return build_control_result(
                 session.selection,
                 request.request_id,
                 ControlResultStatus.REJECTED,
-                error="command is not supported",
+                error="source entity is not controllable",
             )
 
         # 4. Call the service safely

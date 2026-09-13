@@ -2546,9 +2546,7 @@ def test_release_automation_updates_plugin_metadata():
 
     assert "# x-release-please-start-version" in source
     assert "# x-release-please-end" in source
-    assert release_config["packages"]["."]["exclude-paths"] == [
-        ".github/maintainer"
-    ]
+    assert release_config["packages"]["."]["exclude-paths"] == [".github/maintainer"]
     assert {"type": "generic", "path": "plugin.py"} in extra_files
     assert readme.count("x-release-please-start-version") == 2
     assert readme.count("x-release-please-end") == 2
@@ -4291,3 +4289,220 @@ def test_global_callbacks_do_not_forward_procedure_return_values(
         "heartbeat",
         "command",
     ]
+
+
+def test_on_command_dispatches_dimmer_color_cover(loaded_plugin):
+    module, domoticz = loaded_plugin
+    protocol = module.wire_protocol
+    plugin, connection = _start_and_upgrade(module)
+    session_key, session_id = _complete_handshake(
+        module,
+        plugin,
+        connection,
+        server_features=(
+            protocol.FEATURE_DOMOTICZ_CONTROL_V1,
+            protocol.FEATURE_HA_EXPORT_BINARY_V1,
+        ),
+    )
+    module._plugin = plugin
+
+    # 1. Dimmer level command
+    module.onCommand("device-1", 1, "Set Level", 75, "")
+    assert len(connection.sent) > 0
+    signed_payload = protocol.canonical_json_loads(connection.sent[-1]["Payload"])
+    env1 = protocol.verify_envelope(
+        session_key,
+        signed_payload,
+        protocol_version=plugin._protocol_version,
+        expected_direction=protocol.DIRECTION_DOMOTICZ_TO_HA,
+        expected_session_id=session_id,
+        last_sequence=1,
+    )
+    control_data = env1.payload
+    assert control_data["type"] == "control_request"
+    assert control_data["command"] == "Set Level"
+    assert control_data["level"] == 75.0
+    req_id = control_data["request_id"]
+    assert req_id in plugin._pending_controls
+
+    # 2. Receive confirmation
+    res = protocol.build_control_result(
+        plugin._protocol_selection,
+        req_id,
+        protocol.ControlResultStatus.CONFIRMED,
+    )
+    res_signed = protocol.sign_envelope(
+        session_key,
+        protocol_version=plugin._protocol_version,
+        direction=protocol.DIRECTION_HA_TO_DOMOTICZ,
+        session_id=session_id,
+        sequence=2,
+        payload=res,
+    )
+    plugin.onMessage(
+        connection,
+        {
+            "Payload": protocol.canonical_json_dumps(res_signed),
+            "Finish": True,
+        },
+    )
+    assert req_id not in plugin._pending_controls
+    assert (
+        domoticz.statuses[-1]
+        == f"Home Assistant confirmed command execution for transaction '{req_id}'."
+    )
+
+    # 3. Color command with dict
+    module.onCommand(
+        "device-1",
+        1,
+        "Set Color",
+        50,
+        {"m": 3, "t": 0, "r": 255, "g": 128, "b": 0, "cw": 0, "ww": 0},
+    )
+    signed_color = protocol.canonical_json_loads(connection.sent[-1]["Payload"])
+    env2 = protocol.verify_envelope(
+        session_key,
+        signed_color,
+        protocol_version=plugin._protocol_version,
+        expected_direction=protocol.DIRECTION_DOMOTICZ_TO_HA,
+        expected_session_id=session_id,
+        last_sequence=env1.sequence,
+    )
+    color_data = env2.payload
+    assert color_data["type"] == "control_request"
+    assert color_data["command"] == "Set Color"
+    assert json.loads(color_data["color"]) == {
+        "m": 3,
+        "t": 0,
+        "r": 255,
+        "g": 128,
+        "b": 0,
+        "cw": 0,
+        "ww": 0,
+    }
+
+    # 4. Cover Open command
+    module.onCommand("device-cover", 1, "Open", 0, None)
+    signed_cover = protocol.canonical_json_loads(connection.sent[-1]["Payload"])
+    env3 = protocol.verify_envelope(
+        session_key,
+        signed_cover,
+        protocol_version=plugin._protocol_version,
+        expected_direction=protocol.DIRECTION_DOMOTICZ_TO_HA,
+        expected_session_id=session_id,
+        last_sequence=env2.sequence,
+    )
+    cover_data = env3.payload
+    assert cover_data["type"] == "control_request"
+    assert cover_data["command"] == "Open"
+    assert cover_data["level"] == 0.0
+
+
+def test_on_command_rejection_rollbacks_unit_state(loaded_plugin):
+    module, domoticz = loaded_plugin
+    protocol = module.wire_protocol
+    plugin, connection = _start_and_upgrade(module)
+    session_key, session_id = _complete_handshake(
+        module,
+        plugin,
+        connection,
+        server_features=(protocol.FEATURE_DOMOTICZ_CONTROL_V1,),
+    )
+    module._plugin = plugin
+
+    # Setup device in domoticz
+    module.Domoticz.Unit(
+        Name="Test Switch",
+        DeviceID="device-switch",
+        Unit=1,
+        Type=244,
+        Subtype=73,
+        Switchtype=0,
+    ).Create()
+    unit = domoticz.devices["device-switch"].Units[1]
+    unit.nValue = 0
+    unit.sValue = "Off"
+
+    # User toggles to On in Domoticz UI
+    module.onCommand("device-switch", 1, "On", 0, "")
+    signed = protocol.canonical_json_loads(connection.sent[-1]["Payload"])
+    env = protocol.verify_envelope(
+        session_key,
+        signed,
+        protocol_version=plugin._protocol_version,
+        expected_direction=protocol.DIRECTION_DOMOTICZ_TO_HA,
+        expected_session_id=session_id,
+        last_sequence=1,
+    )
+    data = env.payload
+    req_id = data["request_id"]
+
+    # Optimistically Domoticz UI may have changed
+    unit.nValue = 1
+    unit.sValue = "On"
+
+    # Home Assistant rejects the command
+    rej = protocol.build_control_result(
+        plugin._protocol_selection,
+        req_id,
+        protocol.ControlResultStatus.REJECTED,
+        error="source entity is unavailable",
+    )
+    rej_signed = protocol.sign_envelope(
+        session_key,
+        protocol_version=plugin._protocol_version,
+        direction=protocol.DIRECTION_HA_TO_DOMOTICZ,
+        session_id=session_id,
+        sequence=2,
+        payload=rej,
+    )
+    plugin.onMessage(
+        connection,
+        {
+            "Payload": protocol.canonical_json_dumps(rej_signed),
+            "Finish": True,
+        },
+    )
+
+    # Unit should be reverted back to prior state (0, "Off")
+    assert unit.updates[-1]["nValue"] == 0
+    assert unit.updates[-1]["sValue"] == "Off"
+    assert (
+        domoticz.errors[-1]
+        == "Home Assistant rejected command: source entity is unavailable"
+    )
+
+
+def test_plugin_python_39_compatibility_and_isolated_dependencies():
+    plugin_path = ROOT / "plugin.py"
+    with open(plugin_path, encoding="utf-8") as f:
+        source = f.read()
+
+    parsed = ast.parse(source, filename="plugin.py")
+    # Allowed top-level modules
+    allowed_modules = {
+        "base64",
+        "hashlib",
+        "hmac",
+        "importlib",
+        "importlib.util",
+        "json",
+        "math",
+        "os",
+        "secrets",
+        "sys",
+        "uuid",
+        "typing",
+        "DomoticzEx",
+    }
+    imported_modules = set()
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported_modules.add(node.module)
+
+    assert imported_modules.issubset(allowed_modules)

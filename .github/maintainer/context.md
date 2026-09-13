@@ -2,13 +2,13 @@
 
 ## Project
 
-Domoticz Sync is a Home Assistant custom integration that syncs Domoticz device state as read-only Home Assistant entities.
+Domoticz Sync is a Home Assistant custom integration and companion Domoticz plugin that provides bidirectional state synchronization and safe cross-system control.
 
 ## Priorities
 
-- Keep the integration safe and predictable for Home Assistant users.
+- Keep the integration safe, robust, and predictable for Home Assistant and Domoticz users.
 - Expand Domoticz device coverage based on real samples and focused parser tests.
-- Preserve read-only behavior until controllable entities have a clear design and test plan.
+- Enforce strict bidirectional loop safety, provenance validation (`is_domoticz_mirror`), rate limiting, and optimistic state rollback.
 - Prefer small, well-tested changes over broad rewrites.
 
 ## Tone

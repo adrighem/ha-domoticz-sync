@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -27,12 +28,20 @@ class DomoticzConnectionError(DomoticzError):
     """Raised when Domoticz cannot be reached."""
 
 
+class DomoticzTimeoutError(DomoticzConnectionError):
+    """Raised when Domoticz requests time out."""
+
+
 class DomoticzAuthError(DomoticzError):
     """Raised when Domoticz rejects credentials."""
 
 
 class DomoticzApiError(DomoticzError):
     """Raised when Domoticz returns an application-level error."""
+
+
+class DomoticzDeviceUnavailableError(DomoticzApiError):
+    """Raised when target device is missing, busy, or unreachable."""
 
 
 class DomoticzApi:
@@ -93,6 +102,108 @@ class DomoticzApi:
             if isinstance(item, dict) and (item.get("idx") or item.get("Idx"))
         ]
 
+    async def async_switch_command(
+        self,
+        idx: str,
+        command: str,
+    ) -> dict[str, Any]:
+        """Send a switch command (On, Off, Toggle) to Domoticz."""
+        if not idx:
+            raise DomoticzApiError("Invalid device idx")
+        if command not in {"On", "Off", "Toggle"}:
+            raise DomoticzApiError(f"Invalid switch command: {command}")
+        return await self._request(
+            {
+                "type": "command",
+                "param": "switchlight",
+                "idx": idx,
+                "switchcmd": command,
+            }
+        )
+
+    async def async_set_level(
+        self,
+        idx: str,
+        level: int | float,
+    ) -> dict[str, Any]:
+        """Set brightness or dimmer level (0-100) for a device."""
+        if not idx:
+            raise DomoticzApiError("Invalid device idx")
+        clamped = max(0, min(100, int(round(level))))
+        return await self._request(
+            {
+                "type": "command",
+                "param": "switchlight",
+                "idx": idx,
+                "switchcmd": "Set Level",
+                "level": str(clamped),
+            }
+        )
+
+    async def async_set_color(
+        self,
+        idx: str,
+        *,
+        brightness: int | float | None = None,
+        rgb: tuple[int, int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Set RGB color and/or brightness for a color-capable device."""
+        if not idx:
+            raise DomoticzApiError("Invalid device idx")
+        if rgb is None and brightness is not None:
+            return await self.async_set_level(idx, brightness)
+        if rgb is not None:
+            r, g, b = (max(0, min(255, int(c))) for c in rgb)
+            color_payload = json.dumps(
+                {"m": 3, "t": 0, "r": r, "g": g, "b": b, "cw": 0, "ww": 0}
+            )
+            params: dict[str, str] = {
+                "type": "command",
+                "param": "setcolbrightnessvalue",
+                "idx": idx,
+                "color": color_payload,
+            }
+            if brightness is not None:
+                params["brightness"] = str(max(0, min(100, int(round(brightness)))))
+            return await self._request(params)
+        raise DomoticzApiError("Either rgb or brightness must be provided")
+
+    async def async_blind_command(
+        self,
+        idx: str,
+        action: str,
+    ) -> dict[str, Any]:
+        """Send a blind action (Open, Close, Stop) to Domoticz."""
+        if not idx:
+            raise DomoticzApiError("Invalid device idx")
+        if action not in {"Open", "Close", "Stop"}:
+            raise DomoticzApiError(f"Invalid blind action: {action}")
+        return await self._request(
+            {
+                "type": "command",
+                "param": "switchlight",
+                "idx": idx,
+                "switchcmd": action,
+            }
+        )
+
+    async def async_scene_command(
+        self,
+        idx: str,
+        command: str = "On",
+    ) -> dict[str, Any]:
+        """Activate or toggle a Domoticz scene or group."""
+        if not idx:
+            raise DomoticzApiError("Invalid device idx")
+        return await self._request(
+            {
+                "type": "command",
+                "param": "switchscene",
+                "idx": idx,
+                "switchcmd": command,
+            }
+        )
+
     async def _request(self, params: dict[str, str]) -> dict[str, Any]:
         """Perform a GET request against json.htm."""
         url = urljoin(f"{self.base_url}/", "json.htm")
@@ -120,14 +231,18 @@ class DomoticzApi:
                 f"Failed to connect to Domoticz: {err}"
             ) from err
         except TimeoutError as err:
-            raise DomoticzConnectionError("Timed out connecting to Domoticz") from err
+            raise DomoticzTimeoutError("Timed out connecting to Domoticz") from err
         except ValueError as err:
             raise DomoticzApiError("Domoticz returned invalid JSON") from err
 
         if not isinstance(data, dict):
             raise DomoticzApiError("Domoticz returned an invalid response")
         if data.get("status") == "ERROR":
-            raise DomoticzApiError(str(data.get("message") or "Domoticz API error"))
+            msg = str(data.get("message") or "Domoticz API error")
+            msg_lower = msg.lower()
+            if "idx" in msg_lower or "not found" in msg_lower:
+                raise DomoticzDeviceUnavailableError(msg)
+            raise DomoticzApiError(msg)
 
         return data
 

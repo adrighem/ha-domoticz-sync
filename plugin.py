@@ -45,6 +45,7 @@ import base64
 import hashlib
 import hmac
 import importlib.util
+import json
 import math
 import os
 import secrets
@@ -628,6 +629,7 @@ class DomoticzSyncPlugin:
         self._last_ping_tick = 0
         self._pending_ping_id = None
         self._pending_ping_tick = 0
+        self._pending_controls = {}
         self._inventory_requested = False
         self._inventory_confirmed = False
         self._reconnect_delay = 1
@@ -1044,6 +1046,7 @@ class DomoticzSyncPlugin:
             result = wire_protocol.parse_control_result(
                 self._protocol_selection, payload
             )
+            pending = self._pending_controls.pop(result.request_id, None)
             if result.status == wire_protocol.ControlResultStatus.CONFIRMED:
                 Domoticz.Status(
                     "Home Assistant confirmed command execution for transaction "
@@ -1051,6 +1054,25 @@ class DomoticzSyncPlugin:
                 )
             else:
                 Domoticz.Error(f"Home Assistant rejected command: {result.error}")
+                if pending is not None and pending.get("prev_state") is not None:
+                    device = self._get_device(pending["device_id"])
+                    if (
+                        device is not None
+                        and getattr(device, "Units", None) is not None
+                    ):
+                        target_unit = device.Units.get(pending["unit"])
+                        if target_unit is not None:
+                            prev = pending["prev_state"]
+                            update_kwargs = {
+                                "nValue": prev["nValue"],
+                                "sValue": prev["sValue"],
+                            }
+                            if "Color" in prev and prev["Color"]:
+                                update_kwargs["Color"] = prev["Color"]
+                            try:
+                                target_unit.Update(**update_kwargs)
+                            except Exception:
+                                pass
             return
 
         message_id = payload.get("id")
@@ -2011,16 +2033,53 @@ class DomoticzSyncPlugin:
             return
 
         try:
+            str_cmd = str(command) if command is not None else ""
+            if isinstance(level, (int, float)):
+                float_lvl = float(level)
+            elif isinstance(level, str) and level.strip():
+                try:
+                    float_lvl = float(level)
+                except ValueError:
+                    float_lvl = 0.0
+            else:
+                float_lvl = 0.0
+
+            if isinstance(color, dict):
+                str_color = json.dumps(color)
+            elif color is None:
+                str_color = ""
+            else:
+                str_color = str(color)
+
+            device = self._get_device(device_id)
+            prev_state = None
+            if device is not None and getattr(device, "Units", None) is not None:
+                target_unit = device.Units.get(unit)
+                if target_unit is not None:
+                    prev_state = {
+                        "nValue": getattr(target_unit, "nValue", 0),
+                        "sValue": getattr(target_unit, "sValue", ""),
+                        "Color": getattr(target_unit, "Color", ""),
+                    }
+
             request_id = wire_protocol.generate_request_id()
             payload = wire_protocol.build_control(
                 selection=selection,
                 request_id=request_id,
                 target_id=device_id,
                 unit=unit,
-                command=command,
-                level=level,
-                color=color,
+                command=str_cmd,
+                level=float_lvl,
+                color=str_color,
             )
+            self._pending_controls[request_id] = {
+                "device_id": device_id,
+                "unit": unit,
+                "command": str_cmd,
+                "level": float_lvl,
+                "color": str_color,
+                "prev_state": prev_state,
+            }
             self._send_signed(payload)
         except Exception:
             Domoticz.Error("Failed to send control command to Home Assistant.")
@@ -2075,6 +2134,7 @@ class DomoticzSyncPlugin:
         self._out_sequence = 0
         self._in_sequence = 0
         self._pending_ping_id = None
+        self._pending_controls = {}
         self._inventory_requested = False
         self._inventory_confirmed = False
         self._reset_fragments()

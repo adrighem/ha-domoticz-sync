@@ -322,15 +322,6 @@ def collect_export_selection(
                 ExportExclusion(entry.entity_id, ExportExclusionReason.DISABLED)
             )
             continue
-        if entry.domain not in _SUPPORTED_EXPORT_DOMAINS:
-            exclusions.append(
-                ExportExclusion(
-                    entry.entity_id,
-                    ExportExclusionReason.UNSUPPORTED_DOMAIN,
-                )
-            )
-            continue
-
         state = hass.states.get(entry.entity_id)
         attributes = state.attributes if state is not None else {}
         if is_domoticz_mirror(platform=entry.platform, attributes=attributes):
@@ -338,6 +329,15 @@ def collect_export_selection(
                 ExportExclusion(
                     entry.entity_id,
                     ExportExclusionReason.DOMOTICZ_MIRROR,
+                )
+            )
+            continue
+
+        if entry.domain not in _SUPPORTED_EXPORT_DOMAINS:
+            exclusions.append(
+                ExportExclusion(
+                    entry.entity_id,
+                    ExportExclusionReason.UNSUPPORTED_DOMAIN,
                 )
             )
             continue

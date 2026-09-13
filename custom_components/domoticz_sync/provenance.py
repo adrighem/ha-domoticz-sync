@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .const import DOMAIN
+
+if TYPE_CHECKING:
+    from .models import DomoticzDevice
 
 ATTR_DOMOTICZ_IDX = "domoticz_idx"
 ATTR_SYNC_ORIGIN = f"{DOMAIN}_origin"
@@ -33,4 +36,21 @@ def is_domoticz_mirror(
         platform == DOMAIN
         or attributes.get(ATTR_SYNC_ORIGIN) == ORIGIN_DOMOTICZ
         or ATTR_DOMOTICZ_IDX in attributes
+    )
+
+
+def is_sync_plugin_device(device: DomoticzDevice) -> bool:
+    """Return whether a Domoticz device is owned by the export companion plugin."""
+    if (
+        device.device_id
+        and device.device_id.startswith("HA")
+        and len(device.device_id) == 25
+    ):
+        return True
+    hardware_name = (device.hardware_name or "").lower()
+    if "home assistant" in hardware_name and "sync" in hardware_name:
+        return True
+    hardware_type = str(device.raw.get("HardwareType") or "").lower()
+    return "hadomoticzsync" in hardware_type or (
+        "home assistant" in hardware_type and "sync" in hardware_type
     )

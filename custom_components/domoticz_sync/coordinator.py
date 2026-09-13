@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -25,11 +25,16 @@ from .const import (
 )
 from .models import (
     BinaryState,
+    ButtonState,
     DomoticzDevice,
     DomoticzMetric,
+    SwitchState,
     extract_binary_state,
+    extract_button_state,
     extract_sensor_metrics,
+    extract_switch_state,
 )
+from .provenance import is_sync_plugin_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +46,8 @@ class DomoticzData:
     devices: dict[str, DomoticzDevice]
     metrics: dict[str, list[DomoticzMetric]]
     binary_states: dict[str, BinaryState | None]
+    switches: dict[str, SwitchState | None] = field(default_factory=dict)
+    buttons: dict[str, ButtonState | None] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -89,18 +96,36 @@ class DomoticzDataUpdateCoordinator(DataUpdateCoordinator[DomoticzData]):
         except (DomoticzConnectionError, DomoticzError) as err:
             raise UpdateFailed(str(err)) from err
 
-        devices_dict = {device.idx: device for device in devices}
+        valid_devices = [
+            device for device in devices if not is_sync_plugin_device(device)
+        ]
+        dropped = len(devices) - len(valid_devices)
+        if dropped > 0:
+            _LOGGER.debug(
+                "Excluded %d Domoticz device(s) owned by companion export plugin",
+                dropped,
+            )
+
+        devices_dict = {device.idx: device for device in valid_devices}
         metrics_dict = {
-            device.idx: extract_sensor_metrics(device) for device in devices
+            device.idx: extract_sensor_metrics(device) for device in valid_devices
         }
         binary_states_dict = {
-            device.idx: extract_binary_state(device) for device in devices
+            device.idx: extract_binary_state(device) for device in valid_devices
+        }
+        switches_dict = {
+            device.idx: extract_switch_state(device) for device in valid_devices
+        }
+        buttons_dict = {
+            device.idx: extract_button_state(device) for device in valid_devices
         }
 
         return DomoticzData(
             devices=devices_dict,
             metrics=metrics_dict,
             binary_states=binary_states_dict,
+            switches=switches_dict,
+            buttons=buttons_dict,
         )
 
 

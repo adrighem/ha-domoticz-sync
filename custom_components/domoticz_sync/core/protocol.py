@@ -1552,10 +1552,10 @@ def build_control(
     selection: ProtocolSelection,
     request_id: str,
     target_id: str,
-    unit: int,
-    command: str,
-    level: float,
-    color: str,
+    unit: int = 1,
+    command: str = "On",
+    level: float = 0.0,
+    color: str = "",
 ) -> Dict[str, object]:
     """Build one signed control request."""
     _require_export_selection(selection, FEATURE_DOMOTICZ_CONTROL_V1)
@@ -1578,6 +1578,80 @@ def build_control(
             "level": request.level,
             "color": request.color,
         }
+    )
+
+
+def build_control_switch(
+    selection: ProtocolSelection,
+    request_id: str,
+    target_id: str,
+    on: bool,
+    unit: int = 1,
+) -> Dict[str, object]:
+    """Build one switch control request (On or Off)."""
+    return build_control(
+        selection=selection,
+        request_id=request_id,
+        target_id=target_id,
+        unit=unit,
+        command="On" if on else "Off",
+    )
+
+
+def build_control_level(
+    selection: ProtocolSelection,
+    request_id: str,
+    target_id: str,
+    level: float,
+    unit: int = 1,
+) -> Dict[str, object]:
+    """Build one level / brightness / position control request."""
+    return build_control(
+        selection=selection,
+        request_id=request_id,
+        target_id=target_id,
+        unit=unit,
+        command="Set Level",
+        level=level,
+    )
+
+
+def build_control_color(
+    selection: ProtocolSelection,
+    request_id: str,
+    target_id: str,
+    color: str,
+    level: float = 100.0,
+    unit: int = 1,
+) -> Dict[str, object]:
+    """Build one color control request."""
+    return build_control(
+        selection=selection,
+        request_id=request_id,
+        target_id=target_id,
+        unit=unit,
+        command="Set Color",
+        level=level,
+        color=color,
+    )
+
+
+def build_control_cover(
+    selection: ProtocolSelection,
+    request_id: str,
+    target_id: str,
+    action: str,
+    level: float = 0.0,
+    unit: int = 1,
+) -> Dict[str, object]:
+    """Build one cover action request (Open, Close, Stop, etc.)."""
+    return build_control(
+        selection=selection,
+        request_id=request_id,
+        target_id=target_id,
+        unit=unit,
+        command=action,
+        level=level,
     )
 
 
@@ -2352,6 +2426,7 @@ def _unsigned_envelope(
 __all__ = [
     "DIRECTION_DOMOTICZ_TO_HA",
     "DIRECTION_HA_TO_DOMOTICZ",
+    "FEATURE_DOMOTICZ_CONTROL_V1",
     "FEATURE_DOMOTICZ_INVENTORY_V1",
     "FEATURE_HA_EXPORT_BINARY_V1",
     "FEATURE_HA_EXPORT_CONTINUOUS_V1",
@@ -2382,6 +2457,9 @@ __all__ = [
     "ApplyResult",
     "ApplyResultStatus",
     "ClientHello",
+    "ControlRequest",
+    "ControlResult",
+    "ControlResultStatus",
     "HandshakeContext",
     "InventoryResult",
     "InventoryResultStatus",
@@ -2406,6 +2484,12 @@ __all__ = [
     "build_binary_apply_result",
     "build_authenticate",
     "build_challenge",
+    "build_control",
+    "build_control_color",
+    "build_control_cover",
+    "build_control_level",
+    "build_control_result",
+    "build_control_switch",
     "build_hello",
     "build_inventory_request",
     "build_inventory_result",
@@ -2439,6 +2523,8 @@ __all__ = [
     "parse_application_ready",
     "parse_binary_apply",
     "parse_binary_apply_result",
+    "parse_control",
+    "parse_control_result",
     "parse_hello",
     "parse_inventory_request",
     "parse_inventory_result",

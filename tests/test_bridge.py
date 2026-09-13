@@ -26,12 +26,20 @@ from custom_components.domoticz_sync.bridge import (  # noqa: E402
     MAX_BRIDGE_MESSAGE_BYTES,
     MAX_PENDING_HANDSHAKES,
     BridgeApplicationSession,
+    BridgeSession,
     DomoticzBridgeManager,
     DomoticzBridgeView,
+    _parse_domoticz_color,
+)
+from custom_components.domoticz_sync.core import (  # noqa: E402
+    Capability,
+    CapabilityKind,
+    SourceIdentity,
 )
 from custom_components.domoticz_sync.core.protocol import (  # noqa: E402
     DIRECTION_DOMOTICZ_TO_HA,
     DIRECTION_HA_TO_DOMOTICZ,
+    FEATURE_DOMOTICZ_CONTROL_V1,
     FEATURE_HA_EXPORT_BINARY_V1,
     FEATURE_HA_EXPORT_CONTINUOUS_V1,
     FEATURE_HA_EXPORT_NUMERIC_V1,
@@ -40,12 +48,16 @@ from custom_components.domoticz_sync.core.protocol import (  # noqa: E402
     SUPPORTED_V2_FEATURES,
     SUPPORTED_WEBSOCKET_SUBPROTOCOLS,
     WEBSOCKET_SUBPROTOCOL_V2,
+    ControlRequest,
+    ControlResultStatus,
     ProtocolError,
     ProtocolSelection,
     accept_challenge,
     accept_v2_challenge,
     build_application_ready,
     build_authenticate,
+    build_control,
+    build_control_result,
     build_hello,
     build_v2_authenticate,
     build_v2_hello,
@@ -1513,9 +1525,7 @@ async def test_reverse_command_catalog_load_failures_are_logged_safely(
     )
 
     assert (
-        await manager._async_find_mapped_capability(
-            "entry", "destination", "target"
-        )
+        await manager._async_find_mapped_capability("entry", "destination", "target")
         is None
     )
     assert caplog.messages == [
@@ -1535,9 +1545,7 @@ async def test_reverse_command_catalog_load_failures_are_logged_safely(
     )
 
     assert (
-        await manager._async_find_mapped_capability(
-            "entry", "destination", "target"
-        )
+        await manager._async_find_mapped_capability("entry", "destination", "target")
         is None
     )
     assert caplog.messages == [
@@ -1634,3 +1642,447 @@ async def test_oversized_message_is_rejected(
     assert websocket.close_code == WSCloseCode.MESSAGE_TOO_BIG
     assert await manager.async_active_session_count() == 0
     await websocket.close()
+
+
+def test_parse_domoticz_color() -> None:
+    """Test parsing various Domoticz color formats."""
+    assert _parse_domoticz_color("") is None
+    assert _parse_domoticz_color("   ") is None
+
+    res = _parse_domoticz_color('{"m": 3, "t": 0, "r": 255, "g": 128, "b": 64}')
+    assert res == {"rgb_color": (255, 128, 64)}
+
+    res_t = _parse_domoticz_color('{"m": 1, "t": 350, "r": 0, "g": 0, "b": 0}')
+    assert res_t == {"color_temp": 350}
+
+    assert _parse_domoticz_color("#FF8000") == {"rgb_color": (255, 128, 0)}
+    assert _parse_domoticz_color("00FF00") == {"rgb_color": (0, 255, 0)}
+
+    assert _parse_domoticz_color("not-a-color") is None
+    assert _parse_domoticz_color("{invalid-json}") is None
+
+
+@dataclass
+class _FakeApplication:
+    _hass: HomeAssistant
+
+
+@pytest.mark.asyncio
+async def test_handle_control_request_light_cover_button(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bridge handles reverse control for light, cover, and button entities."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+
+    light_entry = registry.async_get_or_create(
+        "light",
+        "integration_test",
+        "light-1",
+        suggested_object_id="test_light",
+    )
+    hass.states.async_set(light_entry.entity_id, "on")
+
+    cover_entry = registry.async_get_or_create(
+        "cover",
+        "integration_test",
+        "cover-1",
+        suggested_object_id="test_cover",
+    )
+    hass.states.async_set(cover_entry.entity_id, "open")
+
+    button_entry = registry.async_get_or_create(
+        "button",
+        "integration_test",
+        "button-1",
+        suggested_object_id="test_button",
+    )
+    hass.states.async_set(button_entry.entity_id, "2026-09-13T10:00:00")
+
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def _record(d: str, s: str, data: dict[str, object]) -> None:
+        calls.append((d, s, data))
+
+    hass.services.async_register(
+        "light",
+        "turn_on",
+        lambda c: _record("light", "turn_on", dict(c.data)),
+    )
+    hass.services.async_register(
+        "cover",
+        "close_cover",
+        lambda c: _record("cover", "close_cover", dict(c.data)),
+    )
+    hass.services.async_register(
+        "cover",
+        "set_cover_position",
+        lambda c: _record("cover", "set_cover_position", dict(c.data)),
+    )
+    hass.services.async_register(
+        "button",
+        "press",
+        lambda c: _record("button", "press", dict(c.data)),
+    )
+
+    manager = DomoticzBridgeManager()
+    manager._application = _FakeApplication(hass)
+
+    capabilities = {
+        "target-light": Capability(
+            source=SourceIdentity(
+                "home_assistant", "instance-1", light_entry.id, "state"
+            ),
+            kind=CapabilityKind.BINARY,
+            name="Test Light",
+            value=True,
+        ),
+        "target-cover": Capability(
+            source=SourceIdentity(
+                "home_assistant", "instance-1", cover_entry.id, "state"
+            ),
+            kind=CapabilityKind.BINARY,
+            name="Test Cover",
+            value=True,
+        ),
+        "target-button": Capability(
+            source=SourceIdentity(
+                "home_assistant", "instance-1", button_entry.id, "state"
+            ),
+            kind=CapabilityKind.BINARY,
+            name="Test Button",
+            value=True,
+        ),
+    }
+
+    async def _mock_find_mapped(
+        entry_id: str, dest_id: str, target_id: str
+    ) -> Capability | None:
+        return capabilities.get(target_id)
+
+    monkeypatch.setattr(manager, "_async_find_mapped_capability", _mock_find_mapped)
+
+    selection = ProtocolSelection(
+        version=PROTOCOL_VERSION_V2,
+        websocket_subprotocol=WEBSOCKET_SUBPROTOCOL_V2,
+        features=SUPPORTED_V2_FEATURES,
+    )
+    session = BridgeSession(
+        entry_id="entry-1",
+        link_id="link-1",
+        destination_id="dest-1",
+        session_id="sess-1",
+        websocket=None,  # type: ignore[arg-type]
+        session_key=b"k" * 32,
+        selection=selection,
+    )
+
+    # Light dimming
+    req_light_dim = ControlRequest(
+        request_id="req-1",
+        target_id="target-light",
+        unit=1,
+        command="Set Level",
+        level=65.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_light_dim)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "light",
+        "turn_on",
+        {"entity_id": light_entry.entity_id, "brightness_pct": 65},
+    )
+
+    # Light color
+    req_light_color = ControlRequest(
+        request_id="req-2",
+        target_id="target-light",
+        unit=1,
+        command="Set Color",
+        level=80.0,
+        color='{"r": 255, "g": 0, "b": 128}',
+    )
+    res = await manager._async_handle_control_request(session, req_light_color)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "light",
+        "turn_on",
+        {
+            "entity_id": light_entry.entity_id,
+            "brightness_pct": 80,
+            "rgb_color": (255, 0, 128),
+        },
+    )
+
+    # Cover close
+    req_cover_close = ControlRequest(
+        request_id="req-3",
+        target_id="target-cover",
+        unit=1,
+        command="Close",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_cover_close)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "cover",
+        "close_cover",
+        {"entity_id": cover_entry.entity_id},
+    )
+
+    # Cover position
+    req_cover_pos = ControlRequest(
+        request_id="req-4",
+        target_id="target-cover",
+        unit=1,
+        command="Set Level",
+        level=40.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_cover_pos)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "cover",
+        "set_cover_position",
+        {"entity_id": cover_entry.entity_id, "position": 40},
+    )
+
+    # Button press
+    req_button_press = ControlRequest(
+        request_id="req-5",
+        target_id="target-button",
+        unit=1,
+        command="Press",
+        level=0.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_button_press)
+    assert res["status"] == "confirmed"
+    assert calls[-1] == (
+        "button",
+        "press",
+        {"entity_id": button_entry.entity_id},
+    )
+
+    # Invalid command on button
+    req_bad = ControlRequest(
+        request_id="req-6",
+        target_id="target-button",
+        unit=1,
+        command="Set Level",
+        level=50.0,
+        color="",
+    )
+    res = await manager._async_handle_control_request(session, req_bad)
+    assert res["status"] == "rejected"
+    assert res["error"] == "command is not supported"
+
+
+@pytest.mark.asyncio
+async def test_handle_control_request_disabled_and_unavailable(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bridge rejects control requests for disabled or unavailable entities."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+
+    disabled_entry = registry.async_get_or_create(
+        "switch",
+        "integration_test",
+        "disabled-1",
+        suggested_object_id="disabled_switch",
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    hass.states.async_set(disabled_entry.entity_id, "off")
+
+    unavail_entry = registry.async_get_or_create(
+        "switch",
+        "integration_test",
+        "unavail-1",
+        suggested_object_id="unavail_switch",
+    )
+    hass.states.async_set(unavail_entry.entity_id, "unavailable")
+
+    manager = DomoticzBridgeManager()
+    manager._application = _FakeApplication(hass)
+
+    async def _mock_find_mapped(
+        entry_id: str, dest_id: str, target_id: str
+    ) -> Capability | None:
+        if target_id == "target-disabled":
+            return Capability(
+                source=SourceIdentity(
+                    "home_assistant", "instance-1", disabled_entry.id, "state"
+                ),
+                kind=CapabilityKind.BINARY,
+                name="Disabled",
+                value=False,
+            )
+        if target_id == "target-unavail":
+            return Capability(
+                source=SourceIdentity(
+                    "home_assistant", "instance-1", unavail_entry.id, "state"
+                ),
+                kind=CapabilityKind.BINARY,
+                name="Unavail",
+                value=False,
+            )
+        return None
+
+    monkeypatch.setattr(manager, "_async_find_mapped_capability", _mock_find_mapped)
+
+    selection = ProtocolSelection(
+        version=PROTOCOL_VERSION_V2,
+        websocket_subprotocol=WEBSOCKET_SUBPROTOCOL_V2,
+        features=SUPPORTED_V2_FEATURES,
+    )
+    session = BridgeSession(
+        entry_id="entry-1",
+        link_id="link-1",
+        destination_id="dest-1",
+        session_id="sess-1",
+        websocket=None,  # type: ignore[arg-type]
+        session_key=b"k" * 32,
+        selection=selection,
+    )
+
+    req_dis = ControlRequest("req-dis", "target-disabled", 1, "On", 0.0, "")
+    res_dis = await manager._async_handle_control_request(session, req_dis)
+    assert res_dis["status"] == "rejected"
+    assert res_dis["error"] == "source entity is disabled"
+
+    req_un = ControlRequest("req-un", "target-unavail", 1, "On", 0.0, "")
+    res_un = await manager._async_handle_control_request(session, req_un)
+    assert res_un["status"] == "rejected"
+    assert res_un["error"] == "source entity is unavailable"
+
+
+@pytest.mark.asyncio
+async def test_control_in_flight_deduplication(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bridge deduplicates concurrent in-flight requests."""
+    manager = DomoticzBridgeManager()
+    manager._application = _FakeApplication(hass)
+
+    call_count = 0
+    gate = asyncio.Event()
+
+    async def _slow_handle(
+        session: BridgeSession, request: object
+    ) -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        await gate.wait()
+        return build_control_result(
+            session.selection,
+            request.request_id,
+            ControlResultStatus.CONFIRMED,
+        )
+
+    monkeypatch.setattr(manager, "_async_handle_control_request", _slow_handle)
+
+    link_id = generate_link_id()
+    pairing_key = generate_pairing_key()
+    destination_id = generate_destination_id()
+    await manager.async_register_link(
+        entry_id="entry-1",
+        link_id=link_id,
+        pairing_key=pairing_key,
+    )
+    client = await _async_create_endpoint(hass, hass_client_no_auth, manager)
+    conn = await _async_connect_v2(
+        client,
+        link_id=link_id,
+        pairing_key=pairing_key,
+        destination_id=destination_id,
+        client_features=(FEATURE_DOMOTICZ_CONTROL_V1,),
+    )
+
+    req = build_control(conn.selection, "req-shared", "target-1", 1, "On", 0.0, "")
+    await conn.async_send(req)
+    await asyncio.sleep(0.02)
+
+    await conn.async_send(req)
+    await asyncio.sleep(0.02)
+
+    assert call_count == 1
+    gate.set()
+
+    res1 = await conn.async_receive()
+    res2 = await conn.async_receive()
+
+    assert res1["type"] == "control_result"
+    assert res1["status"] == "confirmed"
+    assert res2["type"] == "control_result"
+    assert res2["status"] == "confirmed"
+    assert call_count == 1
+
+    await conn.websocket.close()
+
+
+@pytest.mark.asyncio
+async def test_control_rate_limiting(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bridge throttles rapid control floods exceeding rate limits."""
+    from custom_components.domoticz_sync.bridge import MAX_CONTROLS_PER_WINDOW
+
+    manager = DomoticzBridgeManager()
+    manager._application = _FakeApplication(hass)
+
+    async def _instant_handle(
+        session: BridgeSession, request: object
+    ) -> dict[str, object]:
+        return build_control_result(
+            session.selection,
+            request.request_id,
+            ControlResultStatus.CONFIRMED,
+        )
+
+    monkeypatch.setattr(manager, "_async_handle_control_request", _instant_handle)
+
+    link_id = generate_link_id()
+    pairing_key = generate_pairing_key()
+    destination_id = generate_destination_id()
+    await manager.async_register_link(
+        entry_id="entry-1",
+        link_id=link_id,
+        pairing_key=pairing_key,
+    )
+    client = await _async_create_endpoint(hass, hass_client_no_auth, manager)
+    conn = await _async_connect_v2(
+        client,
+        link_id=link_id,
+        pairing_key=pairing_key,
+        destination_id=destination_id,
+        client_features=(FEATURE_DOMOTICZ_CONTROL_V1,),
+    )
+
+    for i in range(MAX_CONTROLS_PER_WINDOW):
+        req_i = build_control(
+            conn.selection, f"flood-{i}", "target-1", 1, "On", 0.0, ""
+        )
+        await conn.async_send(req_i)
+        resp_i = await conn.async_receive()
+        assert resp_i["status"] == "confirmed"
+
+    req_overflow = build_control(
+        conn.selection, "flood-overflow", "target-1", 1, "On", 0.0, ""
+    )
+    await conn.async_send(req_overflow)
+    resp_overflow = await conn.async_receive()
+    assert resp_overflow["status"] == "rejected"
+    assert resp_overflow["error"] == "rate limit exceeded"
+
+    await conn.websocket.close()

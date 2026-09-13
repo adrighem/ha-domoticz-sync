@@ -179,3 +179,67 @@ async def test_diagnostic_sensor_uses_native_entity_category(
     registry_entry = registry.async_get(entity_id)
     assert registry_entry is not None
     assert registry_entry.entity_category is EntityCategory.DIAGNOSTIC
+
+
+@pytest.mark.asyncio
+async def test_coordinator_excludes_sync_plugin_devices(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,
+) -> None:
+    """Coordinator drops Domoticz devices owned by companion export plugin."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Domoticz test",
+        unique_id="http://domoticz-filter.test:8080",
+        data={
+            CONF_URL: "http://domoticz-filter.test:8080",
+            CONF_USERNAME: "",
+            CONF_PASSWORD: "",
+            CONF_VERIFY_SSL: False,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    devices = [
+        DomoticzDevice.from_api(
+            {
+                "idx": "10",
+                "Name": "Living room climate",
+                "Type": "Temp",
+                "Temp": 21.5,
+                "HardwareName": "RFXCOM",
+                "HardwareID": 2,
+                "ID": "climate-1",
+            }
+        ),
+        DomoticzDevice.from_api(
+            {
+                "idx": "99",
+                "Name": "Exported Mirror Device",
+                "Type": "Temp",
+                "Temp": 21.5,
+                "HardwareName": "Home Assistant Domoticz Sync",
+                "HardwareID": 10,
+                "ID": "HA4Z7Y2W8X9V1U3T5R7P9Q2M4",
+            }
+        ),
+    ]
+
+    with patch.object(
+        DomoticzApi,
+        "async_get_devices",
+        AsyncMock(return_value=devices),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert _state_for_source(hass, "sensor", "10") is not None
+    matches = [
+        state
+        for state in hass.states.async_all("sensor")
+        if state.attributes.get("domoticz_idx") == "99"
+    ]
+    assert len(matches) == 0
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

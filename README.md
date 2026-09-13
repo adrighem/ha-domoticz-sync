@@ -12,7 +12,7 @@ contains a Home Assistant custom integration and a Domoticz Python plugin.
 
 | What you want | Direction | How it works |
 | --- | --- | --- |
-| See Domoticz devices in Home Assistant | Domoticz -> Home Assistant | The Home Assistant integration polls the Domoticz JSON API and creates read-only sensors and binary sensors. |
+| See and control Domoticz devices in Home Assistant | Domoticz -> Home Assistant | The Home Assistant integration polls the Domoticz JSON API, creates sensors, binary sensors, switches, and buttons, and executes switch and button commands in Domoticz. |
 | See and control Home Assistant entities in Domoticz | Home Assistant -> Domoticz | The optional Domoticz plugin connects to Home Assistant, mirrors entities in Domoticz, and securely forwards Domoticz UI commands back to Home Assistant. |
 
 The Home Assistant integration is required for both directions. It imports from
@@ -75,8 +75,10 @@ connection.
 
 ## Use Domoticz Devices in Home Assistant
 
-The import side is read-only. Home Assistant can display Domoticz values, but
-it does not send switch or device commands back to Domoticz.
+The import side creates sensor, binary sensor, switch, and button entities in
+Home Assistant. Controllable switches, outlets, relays, and push buttons in
+Domoticz can be operated directly from Home Assistant with optimistic UI
+feedback and error rollback.
 
 ### Choose which Domoticz devices to import
 
@@ -109,7 +111,9 @@ contains several values.
 | Counters, rain, rain rate, wind speed, battery, and signal | Sensor or diagnostic sensor entities |
 | P1 smart-meter energy and power values | Separate tariff energy and current power sensor entities |
 | Safe numeric or text values without a more specific mapping | Generic sensor entities |
-| Motion, door/contact, smoke, leak, lock, occupancy, safety, and switch states | Read-only binary sensor entities |
+| Motion, door/contact, smoke, leak, lock, occupancy, and safety states | Read-only binary sensor entities |
+| Controllable switches, outlets, and relays | Controllable switch entities |
+| Push On/Off buttons and doorbells | Momentary button entities |
 
 Values that cannot be interpreted safely are skipped rather than guessed.
 
@@ -278,8 +282,28 @@ text, and non-finite values are not exported.
 
 Door Lock Inverted preserves Home Assistant's binary meaning: `on` means
 unlocked. Binary sensors remain passive mirrors. Directly labelled Home
-Assistant `switch` and `input_boolean` entities use Generic On/Off and accept
-authenticated On and Off commands from Domoticz.
+Assistant `switch`, `input_boolean`, `light`, `cover`, and `button` entities
+accept authenticated commands from Domoticz (including On/Off, level dimming,
+RGB color, and blind open/close/stop actions).
+
+### Bidirectional sync safety and loop prevention
+
+Domoticz Sync implements strict architectural boundaries to ensure bidirectional
+control is safe and predictable:
+
+- **Loop and circular export prevention**: Any device created by the Domoticz Sync
+  integration in Home Assistant or originating from Domoticz is automatically
+  marked as a Domoticz mirror (`DOMOTICZ_MIRROR`) and excluded from export,
+  preventing circular reflection loops.
+- **Reverse command rate limiting**: Domoticz control requests sent to Home
+  Assistant are subject to in-flight deduplication and a sliding-window rate
+  limiter (maximum 30 commands per 5-second window). Excess bursts are rejected
+  cleanly.
+- **Optimistic UI hold and rollback**: Home Assistant switch entities apply a short
+  optimistic hold to eliminate UI flicker during coordinator poll cycles.
+  Likewise, the Domoticz plugin captures previous unit state before forwarding
+  UI commands, automatically rolling back the Domoticz display if Home Assistant
+  rejects the action.
 
 See the
 [complete Home Assistant to Domoticz mapping](docs/entity-mapping.md) for
