@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 Release Please maintains this file from Conventional Commit messages.
 
+## [0.8.0](https://github.com/adrighem/ha-domoticz-sync/compare/v0.7.0...v0.8.0) (2026-09-26)
+
+
+### Features
+
+* improve error diagnostics and logging for Domoticz authentication and connections (refs [#37](https://github.com/adrighem/ha-domoticz-sync/issues/37)) ([bc62714](https://github.com/adrighem/ha-domoticz-sync/commit/bc62714ff7e186d95415d7191fb2bd04d061ec94))
+
+
+### Bug Fixes
+
+* address code scanning alerts for empty excepts and redundant comparison ([ad17f38](https://github.com/adrighem/ha-domoticz-sync/commit/ad17f384768f6082a8a5550d8cb3670c95912706))
+
+
+### Documentation
+
+* clarify Domoticz Basic-Auth and local network requirements (refs [#37](https://github.com/adrighem/ha-domoticz-sync/issues/37)) ([5dfeab7](https://github.com/adrighem/ha-domoticz-sync/commit/5dfeab7b59b8a7c4b07cd73a7fce65b38a82134e))
+
 ## [0.7.0](https://github.com/adrighem/ha-domoticz-sync/compare/v0.6.2...v0.7.0) (2026-09-13)
 
 
