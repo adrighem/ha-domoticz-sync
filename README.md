@@ -65,7 +65,9 @@ If the button does not add the repository:
 3. Enter the Domoticz URL, for example
    `http://192.168.1.20:8080` or
    `https://domoticz.example.local:8443/domoticz`.
-4. Enter a Domoticz username and password if the API requires them.
+4. Enter a Domoticz username and password if the API requires them:
+   - **Plain HTTP:** Modern Domoticz versions reject HTTP Basic Auth over unencrypted connections by default. If connecting via `http://`, enable **Allow Basic-Auth authentication over plain HTTP** in Domoticz under **Setup** -> **Settings** -> **Security**.
+   - **Trusted local networks:** If Home Assistant is already inside a subnet configured under **Setup** -> **Settings** -> **Security** -> **Local Networks (no auth)**, leave the username and password blank.
 5. Choose whether Home Assistant should verify the Domoticz HTTPS
    certificate.
 
@@ -531,6 +533,7 @@ mixed-version and feature-negotiation rules.
 | Direction | Symptom | What to check |
 | --- | --- | --- |
 | Domoticz -> Home Assistant | The integration cannot be added | Confirm that Home Assistant can reach the Domoticz URL, the credentials are correct, the URL uses HTTP or HTTPS, and the import SSL setting matches the certificate. Do not put credentials in the URL. |
+| Domoticz -> Home Assistant | Domoticz rejected the credentials | If connecting over plain HTTP, enable **Allow Basic-Auth authentication over plain HTTP** in Domoticz (**Setup** -> **Settings** -> **Security**). If Home Assistant is within **Local Networks (no auth)**, leave the credentials blank. Also check under **Setup** -> **Users** that the account is active with assigned devices. |
 | Domoticz -> Home Assistant | Expected entities are missing | Check that the Domoticz devices are active and used, visible to the configured user, and allowed by the hidden and favorite options. |
 | Domoticz -> Home Assistant | A newly created Domoticz device is missing | Reload the integration so Home Assistant can create entities for the new device or metric. |
 | Home Assistant -> Domoticz | PyPluginStore is missing from the Custom menu | Confirm that PyPluginStore was added under Hardware, the current user has the Custom menu enabled, its web folders are writable, and the Domoticz service was restarted. Then hard-refresh the browser. |
