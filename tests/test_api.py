@@ -158,19 +158,57 @@ def test_get_devices_sends_expected_params():
 
 
 def test_get_server_time_auth_error():
-    """Test HTTP auth failures are classified."""
+    """Test HTTP auth failures (401) are classified with status_code."""
     session = MagicMock()
     session.get.return_value = MockResponse(status=401)
     api = DomoticzApi(session, "http://domoticz.local:8080")
 
     try:
         asyncio.run(api.async_get_server_time())
-    except DomoticzAuthError:
+    except DomoticzAuthError as err:
+        assert err.status_code == 401
+        assert "401" in str(err)
         kwargs = session.get.call_args.kwargs
         assert "auth" not in kwargs
         assert kwargs["headers"] is None
         return
     raise AssertionError("Expected DomoticzAuthError")
+
+
+def test_get_server_time_forbidden_error():
+    """Test HTTP forbidden failures (403) are classified with status_code."""
+    session = MagicMock()
+    session.get.return_value = MockResponse(status=403)
+    api = DomoticzApi(session, "http://domoticz.local:8080")
+
+    try:
+        asyncio.run(api.async_get_server_time())
+    except DomoticzAuthError as err:
+        assert err.status_code == 403
+        assert "403" in str(err)
+        return
+    raise AssertionError("Expected DomoticzAuthError")
+
+
+def test_ssl_certificate_error():
+    """Test SSL certificate failures are classified with connection error message."""
+    from aiohttp import ClientConnectorCertificateError
+    from aiohttp.client_reqrep import ConnectionKey
+
+    session = MagicMock()
+    conn_key = ConnectionKey("domoticz.local", 443, False, True, None, None, None)
+    cert_err = ClientConnectorCertificateError(
+        conn_key, Exception("self signed certificate")
+    )
+    session.get.side_effect = cert_err
+    api = DomoticzApi(session, "https://domoticz.local:443")
+
+    try:
+        asyncio.run(api.async_get_server_time())
+    except DomoticzConnectionError as err:
+        assert "SSL certificate validation failed" in str(err)
+        return
+    raise AssertionError("Expected DomoticzConnectionError")
 
 
 def test_http_errors_are_connection_errors():

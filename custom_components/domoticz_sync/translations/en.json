@@ -18,7 +18,7 @@
     },
     "error": {
       "cannot_connect": "Could not connect to Domoticz.",
-      "invalid_auth": "Domoticz rejected the credentials.",
+      "invalid_auth": "Domoticz rejected the credentials. Check your credentials, enable 'Allow Basic-Auth authentication over plain HTTP' in Domoticz Settings, or leave blank if on a trusted local network.",
       "unknown": "Unexpected error."
     },
     "abort": {

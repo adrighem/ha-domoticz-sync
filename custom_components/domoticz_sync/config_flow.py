@@ -121,10 +121,47 @@ class DomoticzSyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         try:
             info = await validate_input(self.hass, user_input)
-        except DomoticzAuthError:
+        except DomoticzAuthError as err:
             errors["base"] = "invalid_auth"
-        except _EXPECTED_CONNECTION_ERRORS:
+            raw_url = user_input.get(CONF_URL, "")
+            try:
+                base_url = normalize_base_url(raw_url)
+            except Exception:
+                base_url = raw_url
+            has_credentials = bool(
+                user_input.get(CONF_USERNAME) or user_input.get(CONF_PASSWORD)
+            )
+            if err.status_code == 403:
+                _LOGGER.warning(
+                    "Domoticz access forbidden (HTTP 403) for %s. "
+                    "Verify user account permissions and assigned devices in "
+                    "Domoticz Setup -> Users",
+                    base_url,
+                )
+            elif base_url.startswith("http://") and has_credentials:
+                _LOGGER.warning(
+                    "Domoticz rejected credentials (HTTP 401) for %s. "
+                    "If connecting via plain HTTP, verify that "
+                    "'Allow Basic-Auth authentication over plain HTTP' is enabled in "
+                    "Domoticz Setup -> Settings -> Security, or leave credentials "
+                    "blank if using Local Networks (no auth)",
+                    base_url,
+                )
+            else:
+                _LOGGER.warning(
+                    "Domoticz rejected credentials (HTTP %s) for %s. "
+                    "Verify username and password, or leave blank if on a "
+                    "trusted local network",
+                    err.status_code,
+                    base_url,
+                )
+        except _EXPECTED_CONNECTION_ERRORS as err:
             errors["base"] = "cannot_connect"
+            _LOGGER.warning(
+                "Failed to connect to Domoticz at %s: %s",
+                user_input.get(CONF_URL, ""),
+                err,
+            )
         except Exception:
             _LOGGER.exception("Unexpected error validating Domoticz connection")
             errors["base"] = "unknown"

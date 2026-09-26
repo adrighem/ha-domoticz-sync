@@ -6,7 +6,12 @@ import json
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
-from aiohttp import ClientError, ClientResponseError, ClientSession
+from aiohttp import (
+    ClientConnectorCertificateError,
+    ClientError,
+    ClientResponseError,
+    ClientSession,
+)
 
 try:
     from aiohttp import encode_basic_auth as _aiohttp_encode_basic_auth
@@ -34,6 +39,15 @@ class DomoticzTimeoutError(DomoticzConnectionError):
 
 class DomoticzAuthError(DomoticzError):
     """Raised when Domoticz rejects credentials."""
+
+    def __init__(
+        self,
+        message: str = "Invalid Domoticz credentials",
+        status_code: int = 401,
+    ) -> None:
+        """Initialize authentication error with status code."""
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class DomoticzApiError(DomoticzError):
@@ -213,18 +227,38 @@ class DomoticzApi:
                 params=params,
                 headers=self._headers,
             ) as resp:
-                if resp.status in (401, 403):
-                    raise DomoticzAuthError("Invalid Domoticz credentials")
+                if resp.status == 401:
+                    raise DomoticzAuthError(
+                        "Domoticz rejected credentials (HTTP 401)",
+                        status_code=401,
+                    )
+                if resp.status == 403:
+                    raise DomoticzAuthError(
+                        "Domoticz access forbidden (HTTP 403)",
+                        status_code=403,
+                    )
 
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
         except DomoticzAuthError:
             raise
         except ClientResponseError as err:
-            if err.status in (401, 403):
-                raise DomoticzAuthError("Invalid Domoticz credentials") from err
+            if err.status == 401:
+                raise DomoticzAuthError(
+                    "Domoticz rejected credentials (HTTP 401)",
+                    status_code=401,
+                ) from err
+            if err.status == 403:
+                raise DomoticzAuthError(
+                    "Domoticz access forbidden (HTTP 403)",
+                    status_code=403,
+                ) from err
             raise DomoticzConnectionError(
                 f"Domoticz returned HTTP {err.status}"
+            ) from err
+        except ClientConnectorCertificateError as err:
+            raise DomoticzConnectionError(
+                f"SSL certificate validation failed connecting to Domoticz: {err}"
             ) from err
         except ClientError as err:
             raise DomoticzConnectionError(

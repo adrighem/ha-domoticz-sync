@@ -92,6 +92,11 @@ class DomoticzDataUpdateCoordinator(DataUpdateCoordinator[DomoticzData]):
                 favorite_only=bool(self.entry.options.get(CONF_FAVORITE_ONLY, False)),
             )
         except DomoticzAuthError as err:
+            _LOGGER.warning(
+                "Domoticz authentication failed during update for %s: %s",
+                self.base_url,
+                err,
+            )
             raise ConfigEntryAuthFailed("Domoticz authentication failed") from err
         except (DomoticzConnectionError, DomoticzError) as err:
             raise UpdateFailed(str(err)) from err
