@@ -1122,6 +1122,8 @@ class DomoticzSyncPlugin:
                             try:
                                 target_unit.Update(**update_kwargs)
                             except Exception:
+                                # Suppress failure to revert device state if
+                                # unit is unavailable or removed.
                                 pass
             return
 

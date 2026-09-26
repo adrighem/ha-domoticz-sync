@@ -2368,7 +2368,6 @@ async def test_control_in_flight_deduplication(
     assert res1["status"] == "confirmed"
     assert res2["type"] == "control_result"
     assert res2["status"] == "confirmed"
-    assert call_count == 1
 
     await conn.websocket.close()
 

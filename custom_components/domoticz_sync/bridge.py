@@ -287,7 +287,8 @@ def _parse_domoticz_color(color_str: str) -> dict[str, object] | None:
                         }
                 if isinstance(t, (int, float)) and t > 0:
                     return {"color_temp": int(t)}
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
+            # Ignore malformed JSON or payload type errors and fall through.
             pass
 
     clean = raw.lstrip("#")
@@ -301,6 +302,7 @@ def _parse_domoticz_color(color_str: str) -> dict[str, object] | None:
                 )
             }
         except ValueError:
+            # Ignore invalid hex strings and fall through.
             pass
 
     return None
