@@ -5,7 +5,7 @@ unit, state class, and Domoticz value encoding agree. A numeric sensor that
 does not have a safe native profile remains functional as a Domoticz Custom
 Sensor. It is not treated as unmapped.
 
-This matrix covers the 62 `SensorDeviceClass` values and 28
+This matrix covers the 62 `SensorDeviceClass` values and 29
 `BinarySensorDeviceClass` values in Home Assistant 2026.8.
 
 ## Numeric Sensors
@@ -66,7 +66,7 @@ signed On and Off commands from Domoticz.
 | `motion` | Motion Sensor |
 | `smoke` | Smoke Detector |
 | `lock` | Door Lock Inverted |
-| `battery`, `battery_charging`, `carbon_monoxide`, `cold`, `connectivity`, `gas`, `heat`, `light`, `moisture`, `moving`, `occupancy`, `plug`, `power`, `presence`, `problem`, `running`, `safety`, `sound`, `tamper`, `update`, `vibration`, no class, or an unknown future class | Generic On/Off |
+| `battery`, `battery_charging`, `carbon_monoxide`, `cold`, `connectivity`, `gas`, `glass_break`, `heat`, `light`, `moisture`, `moving`, `occupancy`, `plug`, `power`, `presence`, `problem`, `running`, `safety`, `sound`, `tamper`, `update`, `vibration`, no class, or an unknown future class | Generic On/Off |
 
 Door Lock Inverted preserves Home Assistant's binary meaning: on means
 unlocked. The generic fallback avoids misleading mappings such as carbon

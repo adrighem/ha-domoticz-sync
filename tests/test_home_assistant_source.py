@@ -776,6 +776,7 @@ def test_every_binary_sensor_device_class_has_an_explicit_export_decision() -> N
         "cold",
         "connectivity",
         "gas",
+        "glass_break",
         "heat",
         "light",
         "moisture",
