@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 Release Please maintains this file from Conventional Commit messages.
 
+## [0.8.1](https://github.com/adrighem/ha-domoticz-sync/compare/v0.8.0...v0.8.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **codeql:** break import cycles and drop unused symbols ([83f433d](https://github.com/adrighem/ha-domoticz-sync/commit/83f433d8e575d795ed506d4714b5d251c974254a))
+
 ## [0.8.0](https://github.com/adrighem/ha-domoticz-sync/compare/v0.7.0...v0.8.0) (2026-09-26)
 
 
