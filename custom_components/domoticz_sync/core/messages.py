@@ -71,28 +71,23 @@ from ._handshake_messages import (
     V2ClientHello,
     V2HandshakeContext,
 )
-from .capabilities import CapabilityKind, SourceIdentity
+from .capabilities import SourceIdentity
+from .errors import (
+    ProtocolAuthenticationError,
+    ProtocolCompatibilityError,
+    ProtocolError,
+    ProtocolFormatError,
+    ProtocolSequenceError,
+)
 from .reconciliation import ReconciliationAction
-
-
-class ProtocolError(ValueError):
-    """Base class for safe protocol failures."""
-
-
-class ProtocolFormatError(ProtocolError):
-    """A protocol document or value does not match its selected format."""
-
-
-class ProtocolAuthenticationError(ProtocolError):
-    """A proof, signature, or authenticated session value is invalid."""
-
-
-class ProtocolSequenceError(ProtocolError):
-    """An authenticated envelope is replayed, missing, or out of order."""
-
-
-class ProtocolCompatibilityError(ProtocolError):
-    """The peers have no mutually supported authenticated behavior."""
+from .validation import (
+    _validate_bounded_integer,
+    _validate_inventory_string,
+    _validate_inventory_target_id,
+    _validate_request_id,
+    _validate_strict_bool,
+    _validate_target_id,
+)
 
 
 class ApplyResultStatus(str, Enum):
@@ -114,39 +109,6 @@ class ControlResultStatus(str, Enum):
 
     CONFIRMED = "confirmed"
     REJECTED = "rejected"
-
-
-@dataclass(frozen=True)
-class _ExportCodec:
-    """One feature-gated application message family for a capability kind."""
-
-    feature: str
-    capability_kinds: Tuple[CapabilityKind, ...]
-    request_type: str
-    result_type: str
-
-
-_NUMERIC_EXPORT_CODEC = _ExportCodec(
-    feature=FEATURE_HA_EXPORT_NUMERIC_V1,
-    capability_kinds=(CapabilityKind.NUMERIC, CapabilityKind.COMPOUND),
-    request_type="apply",
-    result_type="apply_result",
-)
-_BINARY_EXPORT_CODEC = _ExportCodec(
-    feature=FEATURE_HA_EXPORT_BINARY_V1,
-    capability_kinds=(CapabilityKind.BINARY, CapabilityKind.TEXT),
-    request_type="binary_apply",
-    result_type="binary_apply_result",
-)
-
-from .validation import (  # noqa: E402
-    _validate_bounded_integer,
-    _validate_inventory_string,
-    _validate_inventory_target_id,
-    _validate_request_id,
-    _validate_strict_bool,
-    _validate_target_id,
-)
 
 
 @dataclass(frozen=True)

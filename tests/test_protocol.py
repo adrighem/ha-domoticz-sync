@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import math
 import re
+import secrets
 from copy import deepcopy
 
 import pytest
@@ -359,7 +361,7 @@ def test_generated_request_ids_prefix_problematic_raw_tokens(
     raw_token = _token(random_bytes)
     assert raw_token.startswith(raw_prefix)
     monkeypatch.setattr(
-        protocol.secrets,
+        secrets,
         "token_bytes",
         lambda size: random_bytes if size == 32 else bytes(size),
     )
@@ -1327,13 +1329,13 @@ def test_proof_and_signature_verification_use_constant_time_comparison(
 ) -> None:
     """Authentication comparisons go through hmac.compare_digest."""
     calls = []
-    original = protocol.hmac.compare_digest
+    original = hmac.compare_digest
 
     def recording_compare(first: object, second: object) -> bool:
         calls.append((first, second))
         return original(first, second)
 
-    monkeypatch.setattr(protocol.hmac, "compare_digest", recording_compare)
+    monkeypatch.setattr(hmac, "compare_digest", recording_compare)
     pairing_key = _fixed_pairing_key()
     context = _fixed_context()
     verify_client_proof(

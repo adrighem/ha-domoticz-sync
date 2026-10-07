@@ -21,6 +21,12 @@ from pytest_homeassistant_custom_component.typing import (  # noqa: E402
 )
 
 from custom_components.domoticz_sync import bridge as bridge_module  # noqa: E402
+from custom_components.domoticz_sync import (  # noqa: E402
+    bridge_control as bridge_control_module,
+)
+from custom_components.domoticz_sync import (  # noqa: E402
+    bridge_session as bridge_session_module,
+)
 from custom_components.domoticz_sync.bridge import (  # noqa: E402
     BRIDGE_WEBSOCKET_PATH,
     MAX_BRIDGE_MESSAGE_BYTES,
@@ -30,6 +36,10 @@ from custom_components.domoticz_sync.bridge import (  # noqa: E402
     DomoticzBridgeManager,
     DomoticzBridgeView,
     _parse_domoticz_color,
+)
+from custom_components.domoticz_sync.catalog_storage import (  # noqa: E402
+    HomeAssistantBinaryCatalogStorage,
+    HomeAssistantCatalogStorage,
 )
 from custom_components.domoticz_sync.core import (  # noqa: E402
     Capability,
@@ -497,12 +507,7 @@ async def test_application_inbox_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An application that stops consuming cannot grow an unbounded inbox."""
-    monkeypatch.setattr(
-        bridge_module,
-        "MAX_APPLICATION_INBOX_MESSAGES",
-        1,
-        raising=False,
-    )
+    monkeypatch.setattr(bridge_session_module, "MAX_APPLICATION_INBOX_MESSAGES", 1)
     application = PersistentApplication(receive=False)
     manager = DomoticzBridgeManager(application)
     link_id = generate_link_id()
@@ -590,6 +595,9 @@ async def test_application_and_heartbeat_sends_are_serialized(
         await original_send(websocket, document)
 
     monkeypatch.setattr(bridge_module, "_async_send_document", _async_gated_send)
+    monkeypatch.setattr(
+        bridge_session_module, "_async_send_document", _async_gated_send
+    )
     application_send = asyncio.create_task(
         application.session.async_send({"type": "application-send", "value": 1})
     )
@@ -622,8 +630,8 @@ async def test_heartbeat_response_deadline_starts_after_serialized_ping_send(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Send-lock contention cannot consume the peer's pong response window."""
-    monkeypatch.setattr(bridge_module, "HEARTBEAT_INTERVAL", 0.01)
-    monkeypatch.setattr(bridge_module, "HEARTBEAT_RESPONSE_TIMEOUT", 0.1)
+    monkeypatch.setattr(bridge_session_module, "HEARTBEAT_INTERVAL", 0.01)
+    monkeypatch.setattr(bridge_session_module, "HEARTBEAT_RESPONSE_TIMEOUT", 0.1)
     application = PersistentApplication(receive=False)
     manager = DomoticzBridgeManager(application)
     link_id = generate_link_id()
@@ -656,6 +664,9 @@ async def test_heartbeat_response_deadline_starts_after_serialized_ping_send(
         await original_send(websocket, document)
 
     monkeypatch.setattr(bridge_module, "_async_send_document", _async_gated_send)
+    monkeypatch.setattr(
+        bridge_session_module, "_async_send_document", _async_gated_send
+    )
     application_send = asyncio.create_task(
         application.session.async_send({"type": "application-send"})
     )
@@ -1112,6 +1123,11 @@ async def test_failed_ready_send_releases_claim_and_allows_reconnect(
         "_async_send_document",
         _async_fail_first_ready,
     )
+    monkeypatch.setattr(
+        bridge_session_module,
+        "_async_send_document",
+        _async_fail_first_ready,
+    )
 
     failed, _context, _session_key = await _async_start_handshake(
         client,
@@ -1274,6 +1290,7 @@ async def test_manager_stop_cancels_application_and_rejects_stale_sends(
         await original_close(websocket, code, message)
 
     monkeypatch.setattr(bridge_module, "_async_close", _async_gated_close)
+    monkeypatch.setattr(bridge_session_module, "_async_close", _async_gated_close)
     if stop_method == "unregister":
         stop_task = asyncio.create_task(manager.async_unregister_entry("entry-stop"))
     else:
@@ -1354,6 +1371,7 @@ async def test_manager_detach_discards_queued_application_payload(
         await original_close(websocket, code, message)
 
     monkeypatch.setattr(bridge_module, "_async_close", _async_gated_close)
+    monkeypatch.setattr(bridge_session_module, "_async_close", _async_gated_close)
     stop_task = asyncio.create_task(
         manager.async_unregister_entry("entry-queued-detach")
     )
@@ -1443,6 +1461,11 @@ async def test_detach_during_ready_send_cannot_reactivate_session(
         "_async_send_document",
         _async_gate_after_ready_send,
     )
+    monkeypatch.setattr(
+        bridge_session_module,
+        "_async_send_document",
+        _async_gate_after_ready_send,
+    )
     monkeypatch.setattr(manager, "_async_run_heartbeat", _async_observe_heartbeat)
     await websocket.send_str(
         canonical_json_dumps(
@@ -1512,14 +1535,14 @@ async def test_reverse_command_catalog_load_failures_are_logged_safely(
     async def load_empty(self) -> None:
         return None
 
-    caplog.set_level(logging.WARNING, logger=bridge_module.__name__)
+    caplog.set_level(logging.WARNING, logger=bridge_control_module.__name__)
     monkeypatch.setattr(
-        bridge_module.HomeAssistantCatalogStorage,
+        HomeAssistantCatalogStorage,
         "async_load",
         raise_private_error,
     )
     monkeypatch.setattr(
-        bridge_module.HomeAssistantBinaryCatalogStorage,
+        HomeAssistantBinaryCatalogStorage,
         "async_load",
         load_empty,
     )
@@ -1534,12 +1557,12 @@ async def test_reverse_command_catalog_load_failures_are_logged_safely(
 
     caplog.clear()
     monkeypatch.setattr(
-        bridge_module.HomeAssistantCatalogStorage,
+        HomeAssistantCatalogStorage,
         "async_load",
         load_empty,
     )
     monkeypatch.setattr(
-        bridge_module.HomeAssistantBinaryCatalogStorage,
+        HomeAssistantBinaryCatalogStorage,
         "async_load",
         raise_private_error,
     )
@@ -1581,8 +1604,8 @@ async def test_server_pong_timeout_is_absolute_while_client_pings_interleave(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Valid client pings cannot postpone the deadline for the server's pong."""
-    monkeypatch.setattr(bridge_module, "HEARTBEAT_INTERVAL", 0.01)
-    monkeypatch.setattr(bridge_module, "HEARTBEAT_RESPONSE_TIMEOUT", 0.3)
+    monkeypatch.setattr(bridge_session_module, "HEARTBEAT_INTERVAL", 0.01)
+    monkeypatch.setattr(bridge_session_module, "HEARTBEAT_RESPONSE_TIMEOUT", 0.3)
     manager = DomoticzBridgeManager()
     link_id = generate_link_id()
     pairing_key = generate_pairing_key()
@@ -2379,7 +2402,9 @@ async def test_control_rate_limiting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The bridge throttles rapid control floods exceeding rate limits."""
-    from custom_components.domoticz_sync.bridge import MAX_CONTROLS_PER_WINDOW
+    from custom_components.domoticz_sync.bridge_session import (
+        MAX_CONTROLS_PER_WINDOW,
+    )
 
     manager = DomoticzBridgeManager()
     manager._application = _FakeApplication(hass)

@@ -6,13 +6,6 @@ standard-library features so the Domoticz plugin can vendor it unchanged.
 
 from __future__ import annotations
 
-import base64 as base64
-import hashlib as hashlib
-import hmac as hmac
-import json as json
-import re as re
-import secrets as secrets
-
 from ._wire_app import (
     assemble_inventory_results,
     build_apply,

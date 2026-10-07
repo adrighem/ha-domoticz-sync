@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections import deque
 from copy import deepcopy
 from dataclasses import replace
@@ -23,9 +24,6 @@ from custom_components.domoticz_sync.bridge_reconciliation import (  # noqa: E40
 )
 from custom_components.domoticz_sync.const import (  # noqa: E402
     CONF_EXPORT_LABEL_ID,
-)
-from custom_components.domoticz_sync.core import (
-    protocol as protocol_module,  # noqa: E402
 )
 from custom_components.domoticz_sync.core import (
     reconciliation as reconciliation_module,  # noqa: E402
@@ -2814,7 +2812,7 @@ async def test_adapter_generates_valid_ids_for_problematic_raw_tokens(
     """The adapter uses the request-specific generator for every apply."""
     random_bytes = bytes([first_byte]) + bytes(31)
     monkeypatch.setattr(
-        protocol_module.secrets,
+        secrets,
         "token_bytes",
         lambda size: random_bytes if size == 32 else bytes(size),
     )

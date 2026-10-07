@@ -12,36 +12,41 @@ import secrets
 from typing import Dict
 
 from ._crypto_tokens import (
+    _SECRET_BYTES,
     _encode_token,
     _normalize_payload,
     _pairing_key_bytes,
     _token_bytes,
+    generate_nonce,
 )
-from .codec import canonical_json_bytes
-from .messages import (
-    _ENVELOPE_KEYS,
-    PAIRING_KEY_BITS,
-    PROTOCOL_VERSION,
-    PROTOCOL_VERSION_V2,
+from ._handshake_messages import (
     ClientHello,
     HandshakeContext,
+    V2ClientHello,
+    V2HandshakeContext,
+    _require_context,
+    _require_v2_context,
+)
+from .codec import canonical_json_bytes
+from .errors import (
     ProtocolAuthenticationError,
     ProtocolFormatError,
     ProtocolSequenceError,
-    V2ClientHello,
-    V2HandshakeContext,
+)
+from .messages import (
+    _ENVELOPE_KEYS,
+    PROTOCOL_VERSION,
+    PROTOCOL_VERSION_V2,
     VerifiedEnvelope,
 )
 from .validation import (
-    _SECRET_BYTES,
-    _require_context,
     _require_string,
-    _require_v2_context,
     _require_versioned_message,
     _validate_direction,
     _validate_last_sequence,
     _validate_positive_sequence,
     _validate_session_key,
+    negotiate_features,
     select_websocket_subprotocol,
     validate_nonce,
 )
@@ -90,11 +95,6 @@ def generate_pairing_key() -> str:
     return _encode_token(secrets.token_bytes(_SECRET_BYTES))
 
 
-def generate_nonce() -> str:
-    """Generate a 256-bit canonical URL-safe handshake nonce."""
-    return _encode_token(secrets.token_bytes(PAIRING_KEY_BITS // 8))
-
-
 def generate_request_id() -> str:
     """Generate a strong correlation ID accepted by the identifier schema."""
     return "request_" + generate_nonce()
@@ -132,8 +132,6 @@ def make_v2_handshake_context(
     )
     if selected_protocol is None:
         raise ProtocolFormatError("invalid protocol message")
-
-    from .validation import negotiate_features
 
     selected_features = negotiate_features(
         hello.client_features,

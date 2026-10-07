@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Final
 
 from aiohttp import WSCloseCode, web
@@ -14,27 +13,18 @@ from .bridge_session import (
     BridgeApplicationSession,
     BridgeConfigurationError,
     BridgeLink,
-    BridgeSession,
     DomoticzSessionRunner,
     _async_close,
     _async_receive_document,
     _async_send_document,
-    _PeerClosed,
 )
+from .bridge_types import BridgeSession, _PeerClosed
 from .bridge_view import (
     BRIDGE_WEBSOCKET_PATH,
     MAX_BRIDGE_MESSAGE_BYTES,
-    PREPARE_TIMEOUT,
     DomoticzBridgeView,
-    _request_protocols,
-    _validate_heartbeat_payload,
-)
-from .catalog_storage import (
-    HomeAssistantBinaryCatalogStorage,
-    HomeAssistantCatalogStorage,
 )
 from .core.protocol import (
-    MAX_INVENTORY_PAGES,
     SUPPORTED_V2_FEATURES,
     SUPPORTED_WEBSOCKET_SUBPROTOCOLS,
     ProtocolAuthenticationError,
@@ -59,18 +49,9 @@ from .core.protocol import (
     verify_v2_authenticate,
 )
 
-_LOGGER = logging.getLogger(__name__)
-
-MAX_APPLICATION_INBOX_MESSAGES: Final = MAX_INVENTORY_PAGES
 MAX_PENDING_HANDSHAKES: Final = 8
-MAX_CONTROL_RESULTS: Final = 256
 FIRST_MESSAGE_TIMEOUT: Final = 3.0
 AUTHENTICATION_TIMEOUT: Final = 10.0
-INVENTORY_TIMEOUT: Final = 10.0
-HEARTBEAT_INTERVAL: Final = 30.0
-HEARTBEAT_RESPONSE_TIMEOUT: Final = 10.0
-MAX_CONTROLS_PER_WINDOW: Final = 30
-CONTROL_WINDOW_SECONDS: Final = 5.0
 
 _POLICY_CLOSE_MESSAGE: Final = b"Protocol error"
 _PEER_CLOSE_MESSAGE: Final = b"Connection closed"
@@ -345,17 +326,10 @@ class DomoticzBridgeManager(DomoticzControlHandler, DomoticzSessionRunner):
 __all__ = [
     "AUTHENTICATION_TIMEOUT",
     "BRIDGE_WEBSOCKET_PATH",
-    "CONTROL_WINDOW_SECONDS",
     "FIRST_MESSAGE_TIMEOUT",
-    "HEARTBEAT_INTERVAL",
-    "HEARTBEAT_RESPONSE_TIMEOUT",
-    "INVENTORY_TIMEOUT",
-    "MAX_APPLICATION_INBOX_MESSAGES",
     "MAX_BRIDGE_MESSAGE_BYTES",
-    "MAX_CONTROL_RESULTS",
-    "MAX_CONTROLS_PER_WINDOW",
     "MAX_PENDING_HANDSHAKES",
-    "PREPARE_TIMEOUT",
+    "SUPPORTED_V2_FEATURES",
     "BridgeApplication",
     "BridgeApplicationSession",
     "BridgeConfigurationError",
@@ -364,14 +338,6 @@ __all__ = [
     "DomoticzBridgeManager",
     "DomoticzBridgeView",
     "DomoticzControlHandler",
-    "HomeAssistantBinaryCatalogStorage",
-    "HomeAssistantCatalogStorage",
     "_POLICY_CLOSE_MESSAGE",
-    "_PeerClosed",
-    "_async_close",
-    "_async_receive_document",
-    "_async_send_document",
     "_parse_domoticz_color",
-    "_request_protocols",
-    "_validate_heartbeat_payload",
 ]

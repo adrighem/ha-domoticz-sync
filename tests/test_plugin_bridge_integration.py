@@ -54,6 +54,9 @@ from custom_components.domoticz_sync import bridge as bridge_module  # noqa: E40
 from custom_components.domoticz_sync import (  # noqa: E402
     bridge_reconciliation as bridge_reconciliation_module,
 )
+from custom_components.domoticz_sync import (  # noqa: E402
+    bridge_session as bridge_session_module,
+)
 from custom_components.domoticz_sync.bridge import (  # noqa: E402
     BridgeApplicationSession,
     DomoticzBridgeManager,
@@ -118,7 +121,6 @@ from tests.fixtures.domoticz_mocks import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -2015,8 +2017,8 @@ async def test_real_bridge_continuous_export_recovers_without_duplicates(
         "CONTINUOUS_COALESCE_SECONDS",
         0.05,
     )
-    monkeypatch.setattr(bridge_module, "HEARTBEAT_INTERVAL", 0.01)
-    monkeypatch.setattr(bridge_module, "HEARTBEAT_RESPONSE_TIMEOUT", 0.5)
+    monkeypatch.setattr(bridge_session_module, "HEARTBEAT_INTERVAL", 0.01)
+    monkeypatch.setattr(bridge_session_module, "HEARTBEAT_RESPONSE_TIMEOUT", 0.5)
 
     (
         first,

@@ -10,71 +10,47 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ._constants import (
-    FEATURE_DOMOTICZ_INVENTORY_V1,
     MAX_FEATURE_IDS,
     MAX_INVENTORY_TARGET_ID_BYTES,
     MAX_PROTOCOL_TOKENS,
     MAX_SEQUENCE,
-    PAIRING_KEY_BITS,
     PROTOCOL_VERSION,
-    PROTOCOL_VERSION_V2,
 )
-from ._handshake_messages import (
-    HandshakeContext,
-    ProtocolSelection,
-    V2HandshakeContext,
-)
+from ._crypto_tokens import _SECRET_BYTES, _TOKEN_RE, generate_nonce
+from .errors import ProtocolFormatError
 
-_SECRET_BYTES = PAIRING_KEY_BITS // 8
-_NONCE_BYTES = PAIRING_KEY_BITS // 8
-_TOKEN_BYTES = PAIRING_KEY_BITS // 8
-_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _WEBSOCKET_TOKEN_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$")
-_TOKEN_DECODE_ERRORS = (TypeError, ValueError, OverflowError, AttributeError)
 _DIRECTIONS = {
     "domoticz_to_home_assistant",
     "home_assistant_to_domoticz",
 }
 
 
-def _get_protocol_errors():
-    from .messages import ProtocolCompatibilityError, ProtocolFormatError
-
-    return ProtocolCompatibilityError, ProtocolFormatError
-
-
 def generate_link_id() -> str:
     """Generate a link ID accepted by the identifier schema."""
-    from .crypto import generate_nonce
-
     return "link_" + generate_nonce()
 
 
 def generate_destination_id() -> str:
     """Generate a destination ID accepted by the identifier schema."""
-    from .crypto import generate_nonce
-
     return "domoticz_" + generate_nonce()
 
 
 def validate_pairing_key(pairing_key: str) -> None:
     """Validate a pairing key string invariant."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(pairing_key) is not str or _TOKEN_RE.fullmatch(pairing_key) is None:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def validate_link_id(link_id: str) -> None:
     """Validate a link ID identifier invariant."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(link_id) is not str or _IDENTIFIER_RE.fullmatch(link_id) is None:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def validate_destination_id(destination_id: str) -> None:
     """Validate a destination ID identifier invariant."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if (
         type(destination_id) is not str
         or _IDENTIFIER_RE.fullmatch(destination_id) is None
@@ -84,14 +60,12 @@ def validate_destination_id(destination_id: str) -> None:
 
 def validate_nonce(nonce: str) -> None:
     """Validate a handshake nonce invariant."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(nonce) is not str or _TOKEN_RE.fullmatch(nonce) is None:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def validate_protocol_tokens(protocols: Sequence[str]) -> Tuple[str, ...]:
     """Validate a non-empty list of WebSocket subprotocol candidates."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(protocols) not in (list, tuple) or not protocols:
         raise ProtocolFormatError("invalid protocol message")
     if len(protocols) > MAX_PROTOCOL_TOKENS:
@@ -111,7 +85,6 @@ def validate_protocol_tokens(protocols: Sequence[str]) -> Tuple[str, ...]:
 
 def validate_feature_ids(features: Sequence[str]) -> Tuple[str, ...]:
     """Validate and sort optional feature identifiers."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(features) not in (list, tuple):
         raise ProtocolFormatError("invalid protocol message")
     if len(features) > MAX_FEATURE_IDS:
@@ -155,28 +128,24 @@ def negotiate_features(
 
 def _validate_feature_id(feature: str) -> None:
     """Require one lowercase identifier for optional feature flags."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(feature) is not str or _WEBSOCKET_TOKEN_RE.fullmatch(feature) is None:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_request_id(request_id: str) -> None:
     """Require a valid correlation request ID."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(request_id) is not str or _IDENTIFIER_RE.fullmatch(request_id) is None:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_target_id(target_id: str) -> None:
     """Require a valid hardware target ID."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(target_id) is not str or _IDENTIFIER_RE.fullmatch(target_id) is None:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_inventory_target_id(target_id: str) -> None:
     """Validate a hardware-scoped Domoticz target identifier."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if (
         type(target_id) is not str
         or _IDENTIFIER_RE.fullmatch(target_id) is None
@@ -187,103 +156,49 @@ def _validate_inventory_target_id(target_id: str) -> None:
 
 def _validate_inventory_string(value: str, max_bytes: int) -> None:
     """Validate a string inside an inventory payload."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(value) is not str or len(value.encode("utf-8")) > max_bytes:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_bounded_integer(value: int, min_val: int, max_val: int) -> None:
     """Require an integer within [min_val, max_val]."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(value) is not int or not (min_val <= value <= max_val):
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_strict_bool(value: bool) -> None:
     """Require an exact boolean value."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(value) is not bool:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_direction(direction: str) -> None:
     """Validate message direction string."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if direction not in _DIRECTIONS:
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_positive_sequence(sequence: int) -> None:
     """Validate positive sequence number."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(sequence) is not int or not (1 <= sequence <= MAX_SEQUENCE):
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_last_sequence(sequence: int) -> None:
     """Validate last sequence number."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(sequence) is not int or not (0 <= sequence <= MAX_SEQUENCE):
         raise ProtocolFormatError("invalid protocol message")
 
 
 def _validate_session_key(key: bytes) -> bytes:
     """Validate session key length."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(key) is not bytes or len(key) != _SECRET_BYTES:
         raise ProtocolFormatError("invalid protocol message")
     return key
 
 
-def _require_context(context: HandshakeContext) -> HandshakeContext:
-    """Validate and return HandshakeContext."""
-    _, ProtocolFormatError = _get_protocol_errors()
-    if not isinstance(context, HandshakeContext):
-        raise ProtocolFormatError("invalid protocol message")
-    return context
-
-
-def _require_v2_context(context: V2HandshakeContext) -> V2HandshakeContext:
-    """Validate and return V2HandshakeContext."""
-    _, ProtocolFormatError = _get_protocol_errors()
-    if not isinstance(context, V2HandshakeContext):
-        raise ProtocolFormatError("invalid protocol message")
-    return context
-
-
-def _require_v2_selection(selection: ProtocolSelection) -> ProtocolSelection:
-    """Validate and return ProtocolSelection."""
-    ProtocolCompatibilityError, ProtocolFormatError = _get_protocol_errors()
-    if not isinstance(selection, ProtocolSelection):
-        raise ProtocolFormatError("invalid protocol message")
-    if selection.version != PROTOCOL_VERSION_V2:
-        raise ProtocolCompatibilityError("unsupported protocol version")
-    return selection
-
-
-def _require_inventory_selection(selection: ProtocolSelection) -> ProtocolSelection:
-    """Validate inventory feature selection."""
-    ProtocolCompatibilityError, _ = _get_protocol_errors()
-    validated = _require_v2_selection(selection)
-    if not validated.supports(FEATURE_DOMOTICZ_INVENTORY_V1):
-        raise ProtocolCompatibilityError("inventory feature not negotiated")
-    return validated
-
-
-def _require_export_selection(
-    selection: ProtocolSelection, feature: str
-) -> ProtocolSelection:
-    """Validate export feature selection."""
-    ProtocolCompatibilityError, _ = _get_protocol_errors()
-    validated = _require_v2_selection(selection)
-    if not validated.supports(feature):
-        raise ProtocolCompatibilityError("incompatible protocol")
-    return validated
-
-
 def _require_string(value: object) -> str:
     """Require string value."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(value) is not str:
         raise ProtocolFormatError("invalid protocol message")
     return value
@@ -291,7 +206,6 @@ def _require_string(value: object) -> str:
 
 def _require_exact_object(document: object, expected_keys: set) -> Dict[str, object]:
     """Require exact dict keys."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(document) is not dict or set(document.keys()) != expected_keys:
         raise ProtocolFormatError("invalid protocol message")
     return document
@@ -299,7 +213,6 @@ def _require_exact_object(document: object, expected_keys: set) -> Dict[str, obj
 
 def _require_wire_protocol_tokens(protocols: object) -> Tuple[str, ...]:
     """Validate wire protocol tokens."""
-    _, ProtocolFormatError = _get_protocol_errors()
     try:
         return validate_protocol_tokens(protocols)
     except ProtocolFormatError:
@@ -310,7 +223,6 @@ def _require_wire_protocol_tokens(protocols: object) -> Tuple[str, ...]:
 
 def _require_wire_feature_ids(features: object) -> Tuple[str, ...]:
     """Validate wire feature IDs."""
-    _, ProtocolFormatError = _get_protocol_errors()
     try:
         return validate_feature_ids(features)
     except ProtocolFormatError:
@@ -323,7 +235,6 @@ def _require_message(
     document: object, expected_keys: set, expected_type: str
 ) -> Dict[str, object]:
     """Validate base protocol message format."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(document) is not dict or set(document.keys()) != expected_keys:
         raise ProtocolFormatError("invalid protocol message")
     v = document.get("version")
@@ -338,7 +249,6 @@ def _require_versioned_message(
     document: object, expected_keys: set, expected_type: str, version: int
 ) -> Dict[str, object]:
     """Validate versioned message format."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(document) is not dict or set(document.keys()) != expected_keys:
         raise ProtocolFormatError("invalid protocol message")
     v = document.get("version")
@@ -353,7 +263,6 @@ def _require_application_message(
     document: object, expected_keys: set, expected_type: str
 ) -> Dict[str, object]:
     """Validate application message format."""
-    _, ProtocolFormatError = _get_protocol_errors()
     if type(document) is not dict or set(document.keys()) != expected_keys:
         raise ProtocolFormatError("invalid protocol message")
     s = document.get("schema")

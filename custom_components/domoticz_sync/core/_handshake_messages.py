@@ -9,7 +9,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from ._constants import PROTOCOL_VERSION_V2, WEBSOCKET_SUBPROTOCOL_V2
+from ._constants import (
+    FEATURE_DOMOTICZ_INVENTORY_V1,
+    PROTOCOL_VERSION_V2,
+    WEBSOCKET_SUBPROTOCOL_V2,
+)
+from .errors import ProtocolCompatibilityError, ProtocolFormatError
+from .validation import (
+    _validate_feature_id,
+    negotiate_features,
+    select_websocket_subprotocol,
+    validate_destination_id,
+    validate_feature_ids,
+    validate_link_id,
+    validate_nonce,
+    validate_protocol_tokens,
+)
 
 
 @dataclass(frozen=True)
@@ -22,12 +37,6 @@ class ClientHello:
 
     def __post_init__(self) -> None:
         """Validate direct construction as strictly as parsed input."""
-        from .validation import (
-            validate_destination_id,
-            validate_link_id,
-            validate_nonce,
-        )
-
         validate_link_id(self.link_id)
         validate_destination_id(self.destination_id)
         validate_nonce(self.client_nonce)
@@ -44,12 +53,6 @@ class HandshakeContext:
 
     def __post_init__(self) -> None:
         """Validate direct construction as strictly as parsed input."""
-        from .validation import (
-            validate_destination_id,
-            validate_link_id,
-            validate_nonce,
-        )
-
         validate_link_id(self.link_id)
         validate_destination_id(self.destination_id)
         validate_nonce(self.client_nonce)
@@ -66,8 +69,6 @@ class ProtocolSelection:
 
     def __post_init__(self) -> None:
         """Validate direct construction as strictly as handshake selection."""
-        from .messages import ProtocolFormatError
-        from .validation import validate_feature_ids
 
         if self.version != PROTOCOL_VERSION_V2:
             raise ProtocolFormatError("invalid protocol message")
@@ -79,7 +80,6 @@ class ProtocolSelection:
 
     def supports(self, feature: str) -> bool:
         """Return whether one optional behavior was mutually negotiated."""
-        from .validation import _validate_feature_id
 
         _validate_feature_id(feature)
         return feature in self.features
@@ -98,15 +98,6 @@ class V2ClientHello:
 
     def __post_init__(self) -> None:
         """Validate direct construction as strictly as parsed input."""
-        from .messages import ProtocolFormatError
-        from .validation import (
-            validate_destination_id,
-            validate_feature_ids,
-            validate_link_id,
-            validate_nonce,
-            validate_protocol_tokens,
-        )
-
         validate_link_id(self.link_id)
         validate_destination_id(self.destination_id)
         validate_nonce(self.client_nonce)
@@ -141,15 +132,6 @@ class V2HandshakeContext:
 
     def __post_init__(self) -> None:
         """Require one complete deterministic negotiation transcript."""
-        from .messages import ProtocolFormatError
-        from .validation import (
-            negotiate_features,
-            select_websocket_subprotocol,
-            validate_destination_id,
-            validate_link_id,
-            validate_nonce,
-        )
-
         validate_link_id(self.link_id)
         validate_destination_id(self.destination_id)
         validate_nonce(self.client_nonce)
@@ -191,10 +173,56 @@ class V2HandshakeContext:
         )
 
 
+def _require_context(context: HandshakeContext) -> HandshakeContext:
+    """Validate and return HandshakeContext."""
+    if not isinstance(context, HandshakeContext):
+        raise ProtocolFormatError("invalid protocol message")
+    return context
+
+
+def _require_v2_context(context: V2HandshakeContext) -> V2HandshakeContext:
+    """Validate and return V2HandshakeContext."""
+    if not isinstance(context, V2HandshakeContext):
+        raise ProtocolFormatError("invalid protocol message")
+    return context
+
+
+def _require_v2_selection(selection: ProtocolSelection) -> ProtocolSelection:
+    """Validate and return ProtocolSelection."""
+    if not isinstance(selection, ProtocolSelection):
+        raise ProtocolFormatError("invalid protocol message")
+    if selection.version != PROTOCOL_VERSION_V2:
+        raise ProtocolCompatibilityError("unsupported protocol version")
+    return selection
+
+
+def _require_inventory_selection(selection: ProtocolSelection) -> ProtocolSelection:
+    """Validate inventory feature selection."""
+    validated = _require_v2_selection(selection)
+    if not validated.supports(FEATURE_DOMOTICZ_INVENTORY_V1):
+        raise ProtocolCompatibilityError("inventory feature not negotiated")
+    return validated
+
+
+def _require_export_selection(
+    selection: ProtocolSelection, feature: str
+) -> ProtocolSelection:
+    """Validate export feature selection."""
+    validated = _require_v2_selection(selection)
+    if not validated.supports(feature):
+        raise ProtocolCompatibilityError("incompatible protocol")
+    return validated
+
+
 __all__ = [
     "ClientHello",
     "HandshakeContext",
     "ProtocolSelection",
     "V2ClientHello",
     "V2HandshakeContext",
+    "_require_context",
+    "_require_export_selection",
+    "_require_inventory_selection",
+    "_require_v2_context",
+    "_require_v2_selection",
 ]

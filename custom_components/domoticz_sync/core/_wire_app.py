@@ -8,9 +8,14 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from ._handshake_messages import (
+    _require_export_selection,
+    _require_inventory_selection,
+)
 from ._serializers import (
     _build_export_apply,
     _build_export_apply_result,
+    _ExportCodec,
     _inventory_result_to_dict,
     _inventory_target_from_dict,
     _normalize_inventory_payload,
@@ -18,15 +23,15 @@ from ._serializers import (
     _parse_export_apply,
     _parse_export_apply_result,
 )
-from .capabilities import SourceIdentity
+from .capabilities import CapabilityKind, SourceIdentity
 from .messages import (
-    _BINARY_EXPORT_CODEC,
     _CONTROL_REQUEST_KEYS,
     _CONTROL_RESULT_KEYS,
     _INVENTORY_REQUEST_KEYS,
     _INVENTORY_RESULT_KEYS,
-    _NUMERIC_EXPORT_CODEC,
     FEATURE_DOMOTICZ_CONTROL_V1,
+    FEATURE_HA_EXPORT_BINARY_V1,
+    FEATURE_HA_EXPORT_NUMERIC_V1,
     MAX_INVENTORY_PAGES,
     MAX_INVENTORY_TARGETS,
     MAX_INVENTORY_UNITS,
@@ -46,11 +51,23 @@ from .messages import (
 from .reconciliation import ReconciliationAction
 from .validation import (
     _require_application_message,
-    _require_export_selection,
-    _require_inventory_selection,
     _require_string,
     _validate_request_id,
 )
+
+_NUMERIC_EXPORT_CODEC = _ExportCodec(
+    feature=FEATURE_HA_EXPORT_NUMERIC_V1,
+    capability_kinds=(CapabilityKind.NUMERIC, CapabilityKind.COMPOUND),
+    request_type="apply",
+    result_type="apply_result",
+)
+_BINARY_EXPORT_CODEC = _ExportCodec(
+    feature=FEATURE_HA_EXPORT_BINARY_V1,
+    capability_kinds=(CapabilityKind.BINARY, CapabilityKind.TEXT),
+    request_type="binary_apply",
+    result_type="binary_apply_result",
+)
+
 
 __all__ = [
     "assemble_inventory_results",

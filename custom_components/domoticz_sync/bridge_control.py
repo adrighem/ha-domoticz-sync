@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from homeassistant.helpers import entity_registry as er
 
+from .bridge_types import BridgeSession
 from .catalog_storage import (
     HomeAssistantBinaryCatalogStorage,
     HomeAssistantCatalogStorage,
@@ -26,15 +26,7 @@ from .core.protocol import (
     build_control_result,
 )
 
-if TYPE_CHECKING:
-    from .bridge_session import BridgeSession
-
 _LOGGER = logging.getLogger(__name__)
-
-
-def _bridge_attr(name: str, default: Any) -> Any:
-    mod = sys.modules.get("custom_components.domoticz_sync.bridge")
-    return getattr(mod, name, default) if mod is not None else default
 
 
 def _parse_domoticz_color(color_str: str) -> dict[str, object] | None:
@@ -116,10 +108,7 @@ class DomoticzControlHandler:
         hass = self._application._hass
 
         # 1. Check numeric catalog
-        num_storage_cls = _bridge_attr(
-            "HomeAssistantCatalogStorage", HomeAssistantCatalogStorage
-        )
-        num_storage = num_storage_cls(
+        num_storage = HomeAssistantCatalogStorage(
             hass,
             entry_id=entry_id,
             destination_id=destination_id,
@@ -143,11 +132,7 @@ class DomoticzControlHandler:
             )
 
         # 2. Check binary catalog
-        bin_storage_cls = _bridge_attr(
-            "HomeAssistantBinaryCatalogStorage",
-            HomeAssistantBinaryCatalogStorage,
-        )
-        bin_storage = bin_storage_cls(
+        bin_storage = HomeAssistantBinaryCatalogStorage(
             hass,
             entry_id=entry_id,
             destination_id=destination_id,

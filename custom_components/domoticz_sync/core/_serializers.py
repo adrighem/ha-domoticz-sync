@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Dict, Union
+from dataclasses import dataclass
+from typing import Dict, Tuple, Union
 
+from ._handshake_messages import _require_export_selection
 from .capabilities import (
     Availability,
     Capability,
@@ -30,17 +32,27 @@ from .messages import (
     InventoryUnit,
     ProtocolFormatError,
     ProtocolSelection,
-    _ExportCodec,
 )
 from .reconciliation import ReconciliationAction, ReconciliationActionKind
 from .validation import (
     _require_application_message,
     _require_exact_object,
-    _require_export_selection,
     _require_string,
 )
 
+
+@dataclass(frozen=True)
+class _ExportCodec:
+    """One feature-gated application message family for a capability kind."""
+
+    feature: str
+    capability_kinds: Tuple[CapabilityKind, ...]
+    request_type: str
+    result_type: str
+
+
 __all__ = [
+    "_ExportCodec",
     "_action_from_dict",
     "_action_to_dict",
     "_build_export_apply",

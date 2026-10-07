@@ -4,51 +4,42 @@ from __future__ import annotations
 
 import asyncio
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Final
+from typing import Final, Protocol
 
-from aiohttp import WSCloseCode, WSMsgType, web
+from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 
 from .const import DOMAIN
 from .core.protocol import (
-    MAX_INVENTORY_PAGES,
     SUPPORTED_WEBSOCKET_SUBPROTOCOLS,
     ProtocolError,
-    canonical_json_dumps,
-    canonical_json_loads,
     select_websocket_subprotocol,
     validate_nonce,
     validate_protocol_tokens,
 )
 
-if TYPE_CHECKING:
-    from .bridge import DomoticzBridgeManager
-
 BRIDGE_WEBSOCKET_PATH: Final = "/api/domoticz_sync/websocket"
 MAX_BRIDGE_MESSAGE_BYTES: Final = 64 * 1024
 PREPARE_TIMEOUT: Final = 5.0
 
-MAX_APPLICATION_INBOX_MESSAGES: Final = MAX_INVENTORY_PAGES
-MAX_CONTROL_RESULTS: Final = 256
-INVENTORY_TIMEOUT: Final = 10.0
-HEARTBEAT_INTERVAL: Final = 30.0
-HEARTBEAT_RESPONSE_TIMEOUT: Final = 10.0
-MAX_CONTROLS_PER_WINDOW: Final = 30
-CONTROL_WINDOW_SECONDS: Final = 5.0
 
+class _HandshakeManager(Protocol):
+    """Manager operations used by the bridge view."""
 
-class _PeerClosed(Exception):
-    """The peer closed its connection normally."""
+    async def async_reserve_handshake(self) -> bool:
+        """Reserve one bounded unauthenticated handshake slot."""
 
+    async def async_release_handshake(self) -> None:
+        """Release a previously reserved handshake slot."""
 
-def _validate_heartbeat_payload(payload: dict[str, object]) -> str:
-    """Validate an exact signed application heartbeat payload."""
-    if set(payload) != {"id", "type"}:
-        raise ProtocolError("invalid protocol message")
-    heartbeat_id = payload["id"]
-    validate_nonce(heartbeat_id)
-    assert isinstance(heartbeat_id, str)
-    return heartbeat_id
+    async def async_handle_reserved(
+        self,
+        websocket: web.WebSocketResponse,
+        *,
+        client_protocols: tuple[str, ...],
+        selected_protocol: str | None,
+    ) -> None:
+        """Authenticate and run a connection with a reserved slot."""
 
 
 def _parse_ping(payload: dict[str, object]) -> str:
@@ -59,15 +50,6 @@ def _parse_ping(payload: dict[str, object]) -> str:
     validate_nonce(ping_id)
     assert isinstance(ping_id, str)
     return ping_id
-
-
-def _raise_normalized_session_error(error: BaseException) -> None:
-    """Raise expected transport failures."""
-    if not isinstance(error, Exception) or isinstance(
-        error, (_PeerClosed, ProtocolError, TimeoutError, ConnectionError)
-    ):
-        raise error
-    raise ProtocolError("application session is unavailable") from None
 
 
 def _request_protocols(request: web.Request) -> tuple[str, ...]:
@@ -83,39 +65,6 @@ def _request_protocols(request: web.Request) -> tuple[str, ...]:
     return validate_protocol_tokens(tokens)
 
 
-async def _async_receive_document(websocket: web.WebSocketResponse) -> object:
-    """Receive one canonical text document or classify a closed peer."""
-    message = await websocket.receive()
-    if message.type is WSMsgType.TEXT:
-        return canonical_json_loads(message.data)
-    if message.type in {
-        WSMsgType.CLOSE,
-        WSMsgType.CLOSED,
-        WSMsgType.CLOSING,
-        WSMsgType.ERROR,
-    }:
-        raise _PeerClosed
-    raise ProtocolError("invalid protocol message")
-
-
-async def _async_send_document(
-    websocket: web.WebSocketResponse,
-    document: object,
-) -> None:
-    """Send one canonical text document."""
-    await websocket.send_str(canonical_json_dumps(document))
-
-
-async def _async_close(
-    websocket: web.WebSocketResponse,
-    code: WSCloseCode,
-    message: bytes,
-) -> None:
-    """Close a WebSocket without leaking protocol or credential details."""
-    if not websocket.closed:
-        await websocket.close(code=code, message=message)
-
-
 class DomoticzBridgeView(HomeAssistantView):
     """Unauthenticated HTTP upgrade endpoint with protocol-level authentication."""
 
@@ -124,7 +73,7 @@ class DomoticzBridgeView(HomeAssistantView):
     requires_auth = False
     cors_allowed = False
 
-    def __init__(self, manager: DomoticzBridgeManager) -> None:
+    def __init__(self, manager: _HandshakeManager) -> None:
         """Initialize the singleton view."""
         self._manager = manager
 

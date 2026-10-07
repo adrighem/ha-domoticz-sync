@@ -3,47 +3,48 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from .models import (
-        DomoticzDevice,
-        DomoticzMetric,
-    )
-
-STATE_CLASS_MEASUREMENT = "measurement"
-STATE_CLASS_TOTAL_INCREASING = "total_increasing"
-ENTITY_CATEGORY_DIAGNOSTIC = "diagnostic"
-DEVICE_CLASS_BATTERY = "battery"
-DEVICE_CLASS_HUMIDITY = "humidity"
-DEVICE_CLASS_ILLUMINANCE = "illuminance"
-DEVICE_CLASS_POWER = "power"
-DEVICE_CLASS_PRESSURE = "atmospheric_pressure"
-DEVICE_CLASS_TEMPERATURE = "temperature"
-DEVICE_CLASS_VOLTAGE = "voltage"
-DEVICE_CLASS_ENERGY = "energy"
-DEVICE_CLASS_WATER = "water"
-DEVICE_CLASS_PRECIPITATION = "precipitation"
-DEVICE_CLASS_PRECIPITATION_INTENSITY = "precipitation_intensity"
-DEVICE_CLASS_WIND_SPEED = "wind_speed"
-DEVICE_CLASS_CURRENT = "current"
-DEVICE_CLASS_FREQUENCY = "frequency"
-UNIT_CELSIUS = "celsius"
-UNIT_FAHRENHEIT = "fahrenheit"
-UNIT_PERCENT = "percent"
-UNIT_HPA = "hpa"
-UNIT_LUX = "lux"
-UNIT_VOLT = "volt"
-UNIT_WATT = "watt"
-UNIT_KWH = "kwh"
-UNIT_M3 = "m3"
-UNIT_LITERS = "l"
-UNIT_MM = "mm"
-UNIT_MM_PER_HOUR = "mm_per_hour"
-UNIT_METER_PER_SECOND = "meter_per_second"
-UNIT_BAR = "bar"
-UNIT_AMPERE = "A"
-UNIT_HERTZ = "hz"
+from .device_models import (
+    DomoticzDevice,
+    DomoticzMetric,
+    _as_str,
+)
+from .metric_constants import (
+    DEVICE_CLASS_BATTERY,
+    DEVICE_CLASS_CURRENT,
+    DEVICE_CLASS_ENERGY,
+    DEVICE_CLASS_FREQUENCY,
+    DEVICE_CLASS_HUMIDITY,
+    DEVICE_CLASS_ILLUMINANCE,
+    DEVICE_CLASS_POWER,
+    DEVICE_CLASS_PRECIPITATION,
+    DEVICE_CLASS_PRECIPITATION_INTENSITY,
+    DEVICE_CLASS_PRESSURE,
+    DEVICE_CLASS_TEMPERATURE,
+    DEVICE_CLASS_VOLTAGE,
+    DEVICE_CLASS_WATER,
+    DEVICE_CLASS_WIND_SPEED,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL_INCREASING,
+    UNIT_AMPERE,
+    UNIT_BAR,
+    UNIT_CELSIUS,
+    UNIT_FAHRENHEIT,
+    UNIT_HERTZ,
+    UNIT_HPA,
+    UNIT_KWH,
+    UNIT_LITERS,
+    UNIT_LUX,
+    UNIT_M3,
+    UNIT_METER_PER_SECOND,
+    UNIT_MM,
+    UNIT_MM_PER_HOUR,
+    UNIT_PERCENT,
+    UNIT_VOLT,
+    UNIT_WATT,
+)
 
 _NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 
@@ -165,8 +166,6 @@ _METRIC_SPECS: tuple[_MetricSpec, ...] = (
 
 def extract_sensor_metrics(device: DomoticzDevice) -> list[DomoticzMetric]:
     """Extract Home Assistant sensor metrics from a Domoticz device."""
-    from .models import DomoticzMetric
-
     if device.type == "P1 Smart Meter" or (
         device.sub_type and "p1" in device.sub_type.lower()
     ):
@@ -299,8 +298,6 @@ def extract_sensor_metrics(device: DomoticzDevice) -> list[DomoticzMetric]:
 
 def _fallback_metric(device: DomoticzDevice) -> DomoticzMetric | None:
     """Build a generic metric from Data when Domoticz gives no typed fields."""
-    from .models import DomoticzMetric
-
     data = (device.data or "").strip()
     if not data:
         return None
@@ -414,16 +411,3 @@ def _parse_float(value: Any) -> float | None:
         return float(match.group(0).replace(",", "."))
     except ValueError:
         return None
-
-
-def _optional_str(value: Any) -> str | None:
-    """Return a non-empty string or None."""
-    if value is None:
-        return None
-    string_value = _as_str(value).strip()
-    return string_value or None
-
-
-def _as_str(value: Any) -> str:
-    """Return a string representation of an API value."""
-    return "" if value is None else str(value)

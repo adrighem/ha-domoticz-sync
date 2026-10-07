@@ -9,6 +9,11 @@ from __future__ import annotations
 import hmac
 from typing import Dict, Sequence
 
+from ._handshake_messages import (
+    _require_context,
+    _require_v2_context,
+    _require_v2_selection,
+)
 from ._serializers import _normalize_payload
 from .crypto import (
     _token_bytes,
@@ -45,11 +50,8 @@ from .messages import (
 )
 from .validation import (
     _require_application_message,
-    _require_context,
     _require_message,
     _require_string,
-    _require_v2_context,
-    _require_v2_selection,
     _require_versioned_message,
     _require_wire_feature_ids,
     _require_wire_protocol_tokens,

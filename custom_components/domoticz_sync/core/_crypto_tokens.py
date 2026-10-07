@@ -7,25 +7,35 @@ standard-library features.
 from __future__ import annotations
 
 import base64
+import re
+import secrets
 from typing import Dict
 
+from ._constants import PAIRING_KEY_BITS
 from .codec import canonical_json_dumps, canonical_json_loads
-from .messages import ProtocolFormatError
-from .validation import (
-    _SECRET_BYTES,
-    _TOKEN_BYTES,
-    _TOKEN_DECODE_ERRORS,
-    _TOKEN_RE,
-)
+from .errors import ProtocolFormatError
+
+_SECRET_BYTES = PAIRING_KEY_BITS // 8
+_TOKEN_BYTES = PAIRING_KEY_BITS // 8
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_TOKEN_DECODE_ERRORS = (TypeError, ValueError, OverflowError, AttributeError)
 
 __all__ = [
+    "_SECRET_BYTES",
+    "_TOKEN_RE",
     "_decode_token",
     "_encode_token",
     "_encode_unpadded",
+    "generate_nonce",
     "_normalize_payload",
     "_pairing_key_bytes",
     "_token_bytes",
 ]
+
+
+def generate_nonce() -> str:
+    """Generate a 256-bit canonical URL-safe handshake nonce."""
+    return _encode_token(secrets.token_bytes(PAIRING_KEY_BITS // 8))
 
 
 def _pairing_key_bytes(pairing_key: object) -> bytes:

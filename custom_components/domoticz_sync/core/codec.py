@@ -14,6 +14,7 @@ from ._constants import (
     MAX_MESSAGE_BYTES,
     MAX_SAFE_INTEGER,
 )
+from .errors import ProtocolFormatError
 
 __all__ = [
     "canonical_json_bytes",
@@ -24,8 +25,6 @@ __all__ = [
 
 def canonical_json_dumps(value: object) -> str:
     """Serialize one value to the protocol's deterministic JSON subset."""
-    from .messages import ProtocolFormatError
-
     try:
         _validate_json_value(value)
         encoded = json.dumps(
@@ -55,8 +54,6 @@ def canonical_json_bytes(value: object) -> bytes:
 
 def canonical_json_loads(document: object) -> object:
     """Parse one canonical JSON payload and require strict schema compliance."""
-    from .messages import ProtocolFormatError
-
     try:
         if type(document) is bytes:
             if len(document) > MAX_MESSAGE_BYTES:
