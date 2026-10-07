@@ -104,6 +104,18 @@ from custom_components.domoticz_sync.core.reconciliation import (  # noqa: E402
 from custom_components.domoticz_sync.home_assistant_source import (  # noqa: E402
     collect_export_selection,
 )
+from tests.fixtures.domoticz_mocks import (  # noqa: E402
+    FakeConnection as _FakeConnection,
+)
+from tests.fixtures.domoticz_mocks import (
+    FakeDevice as _FakeDevice,
+)
+from tests.fixtures.domoticz_mocks import (
+    FakeDomoticz as _FakeDomoticz,
+)
+from tests.fixtures.domoticz_mocks import (
+    FakeUnit as _FakeUnit,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 _MISSING = object()
@@ -126,135 +138,6 @@ def _assert_inventory_negotiation_enabled(
     assert FEATURE_DOMOTICZ_INVENTORY_V1 in (
         plugin_module.wire_protocol.SUPPORTED_V2_FEATURES
     )
-
-
-class _FakeConnection:
-    """Translate Domoticz connection callbacks into an in-memory send queue."""
-
-    def __init__(self, **kwargs: object) -> None:
-        self.kwargs = kwargs
-        self.sent: list[dict[str, object]] = []
-        self.connecting = False
-        self.connected = False
-        self.disconnected = False
-
-    def Connect(self) -> None:
-        self.connecting = True
-
-    def Connected(self) -> bool:
-        return self.connected
-
-    def Connecting(self) -> bool:
-        return self.connecting
-
-    def Send(self, document: dict[str, object]) -> None:
-        self.sent.append(document)
-
-    def Disconnect(self) -> None:
-        self.connecting = False
-        self.connected = False
-        self.disconnected = True
-
-
-class _FakeUnit:
-    """In-memory DomoticzEx unit with observable persistence calls."""
-
-    def __init__(self, domoticz: _FakeDomoticz, **kwargs: object) -> None:
-        self._domoticz = domoticz
-        self.Name = kwargs.get("Name")
-        self.Unit = kwargs.get("Unit", 1)
-        self.Type = kwargs.get("Type", 0)
-        self.SubType = kwargs.get("Subtype", kwargs.get("SubType", 0))
-        self.SwitchType = kwargs.get("Switchtype", kwargs.get("SwitchType", 0))
-        self.Options = dict(kwargs.get("Options", {}))
-        self.Used = kwargs.get("Used", 0)
-        self.nValue = kwargs.get("nValue", 0)
-        self.sValue = kwargs.get("sValue", "")
-        self.updates: list[dict[str, object]] = []
-        self.refreshes = 0
-
-    def Update(self, **kwargs: object) -> None:
-        self.updates.append(dict(kwargs))
-
-    def Refresh(self) -> None:
-        self.refreshes += 1
-
-
-class _FakeDevice:
-    """Container matching DomoticzEx's extended device model."""
-
-    def __init__(self, target_id: str) -> None:
-        self.DeviceID = target_id
-        self.TimedOut = 0
-        self.Units: dict[int, _FakeUnit] = {}
-
-
-class _FakeUnitCreator:
-    """Deferred DomoticzEx Unit creator."""
-
-    def __init__(
-        self,
-        domoticz: _FakeDomoticz,
-        kwargs: dict[str, object],
-    ) -> None:
-        self._domoticz = domoticz
-        self._kwargs = kwargs
-
-    def Create(self) -> _FakeUnit:
-        self._domoticz.create_calls.append(dict(self._kwargs))
-        target_id = self._kwargs.get("DeviceID")
-        assert isinstance(target_id, str)
-        unit = _FakeUnit(self._domoticz, **self._kwargs)
-        assert isinstance(unit.Unit, int)
-        device = self._domoticz.devices.setdefault(
-            target_id,
-            _FakeDevice(target_id),
-        )
-        device.Units[unit.Unit] = unit
-        return unit
-
-
-class _FakeDomoticz(ModuleType):
-    """Minimal DomoticzEx module used to load the real root plugin."""
-
-    def __init__(self) -> None:
-        super().__init__("DomoticzEx")
-        self.configuration: dict[str, object] = {}
-        self.connections: list[_FakeConnection] = []
-        self.devices: dict[str, _FakeDevice] = {}
-        self.create_calls: list[dict[str, object]] = []
-        self.logs: list[str] = []
-        self.statuses: list[str] = []
-        self.errors: list[str] = []
-
-    def Configuration(
-        self,
-        config: object = _MISSING,
-    ) -> dict[str, object]:
-        if config is not _MISSING:
-            assert isinstance(config, dict)
-            self.configuration = dict(config)
-        return dict(self.configuration)
-
-    def Connection(self, **kwargs: object) -> _FakeConnection:
-        connection = _FakeConnection(**kwargs)
-        self.connections.append(connection)
-        return connection
-
-    def Heartbeat(self, _seconds: int) -> None:
-        pass
-
-    def Unit(self, **kwargs: object) -> _FakeUnitCreator:
-        return _FakeUnitCreator(self, kwargs)
-
-    def Log(self, message: str) -> None:
-        self.logs.append(message)
-
-    def Status(self, message: str) -> None:
-        self.statuses.append(message)
-
-    def Error(self, message: str) -> None:
-        self.errors.append(message)
 
 
 def _load_plugin(

@@ -11,156 +11,18 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
+from tests.fixtures.domoticz_mocks import (
+    MISSING,
+    WEBSOCKET_GUID,
+    FakeDevice,
+    FakeDomoticz,
+    FakeUnit,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
-WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-MISSING = object()
-
-
-class FakeConnection:
-    """Small callback-native Domoticz connection stand-in."""
-
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.sent = []
-        self.connecting = False
-        self.connected = False
-        self.disconnected = False
-
-    def Connect(self):
-        self.connecting = True
-
-    def Connected(self):
-        return self.connected
-
-    def Connecting(self):
-        return self.connecting
-
-    def Send(self, document):
-        self.sent.append(document)
-
-    def Disconnect(self):
-        self.connected = False
-        self.connecting = False
-        self.disconnected = True
-
-
-class FakeUnit:
-    """In-memory DomoticzEx unit with observable persistence calls."""
-
-    def __init__(self, domoticz, **kwargs):
-        self._domoticz = domoticz
-        self._device_id = kwargs.get("DeviceID")
-        self.Name = kwargs.get("Name")
-        self.Unit = kwargs.get("Unit", 1)
-        self.Type = kwargs.get("Type", 0)
-        self.SubType = kwargs.get("Subtype", kwargs.get("SubType", 0))
-        self.SwitchType = kwargs.get("Switchtype", kwargs.get("SwitchType", 0))
-        self.Options = dict(kwargs.get("Options", {}))
-        self.Used = kwargs.get("Used", 0)
-        self.nValue = kwargs.get("nValue", 0)
-        self.sValue = kwargs.get("sValue", "")
-        self.updates = []
-        self.refreshes = 0
-        self.deleted = False
-
-    def Update(self, **kwargs):
-        self.updates.append(dict(kwargs))
-
-    def Refresh(self):
-        self.refreshes += 1
-        if self._domoticz.corrupt_refreshes:
-            self.sValue = "not-persisted"
-
-    def Delete(self):
-        self.deleted = True
-        device = self._domoticz.devices.get(self._device_id)
-        if device is not None:
-            device.Units.pop(self.Unit, None)
-
-
-class FakeDevice:
-    """Container matching DomoticzEx's extended device model."""
-
-    def __init__(self, domoticz, device_id):
-        self._domoticz = domoticz
-        self.DeviceID = device_id
-        self._timed_out = 0
-        self.Units = {}
-
-    @property
-    def TimedOut(self):
-        return self._timed_out
-
-    @TimedOut.setter
-    def TimedOut(self, value):
-        self._timed_out = value
-
-
-class FakeUnitCreator:
-    """Deferred DomoticzEx Unit creator."""
-
-    def __init__(self, domoticz, kwargs):
-        self._domoticz = domoticz
-        self._kwargs = kwargs
-
-    def Create(self):
-        self._domoticz.create_calls.append(dict(self._kwargs))
-        unit = FakeUnit(self._domoticz, **self._kwargs)
-        if self._domoticz.persist_creates:
-            device = self._domoticz.devices.setdefault(
-                unit._device_id,
-                FakeDevice(self._domoticz, unit._device_id),
-            )
-            device.Units[unit.Unit] = unit
-        return unit
-
-
-class FakeDomoticz(ModuleType):
-    """DomoticzEx module with in-memory configuration and connections."""
-
-    def __init__(self):
-        super().__init__("DomoticzEx")
-        self.configuration = {}
-        self.configuration_writes = []
-        self.connections = []
-        self.devices = {}
-        self.create_calls = []
-        self.persist_creates = True
-        self.corrupt_refreshes = False
-        self.logs = []
-        self.statuses = []
-        self.errors = []
-        self.heartbeat_seconds = None
-
-    def Configuration(self, config=MISSING):
-        if config is not MISSING:
-            self.configuration = dict(config)
-            self.configuration_writes.append(dict(config))
-        return dict(self.configuration)
-
-    def Connection(self, **kwargs):
-        connection = FakeConnection(**kwargs)
-        self.connections.append(connection)
-        return connection
-
-    def Heartbeat(self, seconds):
-        self.heartbeat_seconds = seconds
-
-    def Unit(self, **kwargs):
-        return FakeUnitCreator(self, kwargs)
-
-    def Log(self, message):
-        self.logs.append(message)
-
-    def Status(self, message):
-        self.statuses.append(message)
-
-    def Error(self, message):
-        self.errors.append(message)
 
 
 @pytest.fixture

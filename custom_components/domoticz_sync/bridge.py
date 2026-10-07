@@ -3,46 +3,48 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import time
-from dataclasses import dataclass, field
-from http import HTTPStatus
-from typing import Final, Protocol
+from typing import Final
 
-from aiohttp import WSCloseCode, WSMsgType, web
-from homeassistant.components.http import HomeAssistantView
+from aiohttp import WSCloseCode, web
 
+from .bridge_control import DomoticzControlHandler, _parse_domoticz_color
+from .bridge_session import (
+    BridgeApplication,
+    BridgeApplicationSession,
+    BridgeConfigurationError,
+    BridgeLink,
+    BridgeSession,
+    DomoticzSessionRunner,
+    _async_close,
+    _async_receive_document,
+    _async_send_document,
+    _PeerClosed,
+)
+from .bridge_view import (
+    BRIDGE_WEBSOCKET_PATH,
+    MAX_BRIDGE_MESSAGE_BYTES,
+    PREPARE_TIMEOUT,
+    DomoticzBridgeView,
+    _request_protocols,
+    _validate_heartbeat_payload,
+)
 from .catalog_storage import (
     HomeAssistantBinaryCatalogStorage,
     HomeAssistantCatalogStorage,
 )
-from .const import CONTROLLABLE_EXPORT_DOMAINS, DOMAIN
-from .core import Capability, CompoundCapability, catalog_from_document
 from .core.protocol import (
-    DIRECTION_DOMOTICZ_TO_HA,
-    DIRECTION_HA_TO_DOMOTICZ,
-    FEATURE_DOMOTICZ_CONTROL_V1,
-    FEATURE_HA_EXPORT_BINARY_V1,
-    FEATURE_HA_EXPORT_CONTINUOUS_V1,
-    FEATURE_HA_EXPORT_NUMERIC_V1,
     MAX_INVENTORY_PAGES,
-    PROTOCOL_VERSION,
     SUPPORTED_V2_FEATURES,
     SUPPORTED_WEBSOCKET_SUBPROTOCOLS,
-    ControlResultStatus,
     ProtocolAuthenticationError,
     ProtocolCompatibilityError,
     ProtocolError,
     ProtocolSelection,
-    build_application_ready,
     build_challenge,
-    build_control_result,
     build_ready,
     build_v2_challenge,
     build_v2_ready,
-    canonical_json_dumps,
-    canonical_json_loads,
     derive_session_id,
     derive_session_key,
     derive_v2_session_id,
@@ -50,30 +52,18 @@ from .core.protocol import (
     generate_nonce,
     make_handshake_context,
     make_v2_handshake_context,
-    parse_application_ready,
-    parse_control,
     parse_hello,
     parse_v2_hello,
     select_websocket_subprotocol,
-    sign_envelope,
-    validate_link_id,
-    validate_nonce,
-    validate_pairing_key,
-    validate_protocol_tokens,
     verify_authenticate,
-    verify_envelope,
     verify_v2_authenticate,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-BRIDGE_WEBSOCKET_PATH: Final = "/api/domoticz_sync/websocket"
-
-MAX_BRIDGE_MESSAGE_BYTES: Final = 64 * 1024
 MAX_APPLICATION_INBOX_MESSAGES: Final = MAX_INVENTORY_PAGES
 MAX_PENDING_HANDSHAKES: Final = 8
 MAX_CONTROL_RESULTS: Final = 256
-PREPARE_TIMEOUT: Final = 5.0
 FIRST_MESSAGE_TIMEOUT: Final = 3.0
 AUTHENTICATION_TIMEOUT: Final = 10.0
 INVENTORY_TIMEOUT: Final = 10.0
@@ -87,228 +77,7 @@ _PEER_CLOSE_MESSAGE: Final = b"Connection closed"
 _SHUTDOWN_CLOSE_MESSAGE: Final = b"Bridge unavailable"
 
 
-class BridgeConfigurationError(ValueError):
-    """A bridge link conflicts with another configured link."""
-
-
-class _PeerClosed(Exception):
-    """The peer closed its connection normally."""
-
-
-class BridgeApplication(Protocol):
-    """Application invoked for one ready, authenticated bridge session."""
-
-    async def async_connected(self, session: BridgeApplicationSession) -> None:
-        """Use one ready application session until its transport ends."""
-
-
-@dataclass(frozen=True, slots=True)
-class BridgeLink:
-    """Credentials for one configured Domoticz bridge."""
-
-    entry_id: str
-    link_id: str
-    pairing_key: str = field(repr=False)
-
-    def __post_init__(self) -> None:
-        """Validate credentials even when constructed directly."""
-        validate_link_id(self.link_id)
-        validate_pairing_key(self.pairing_key)
-
-
-@dataclass(slots=True)
-class BridgeSession:
-    """One mutually authenticated Domoticz connection."""
-
-    entry_id: str
-    link_id: str
-    destination_id: str
-    session_id: str
-    websocket: web.WebSocketResponse = field(repr=False)
-    session_key: bytes = field(repr=False)
-    selection: ProtocolSelection | None = None
-    client_sequence: int = 0
-    server_sequence: int = 0
-    ready: bool = False
-    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
-    application_session: BridgeApplicationSession | None = field(
-        default=None,
-        repr=False,
-    )
-    application_task: asyncio.Task[None] | None = field(default=None, repr=False)
-    control_results: dict[str, tuple[object, dict[str, object]]] = field(
-        default_factory=dict,
-        repr=False,
-    )
-    in_flight_controls: dict[str, tuple[object, asyncio.Future[dict[str, object]]]] = (
-        field(
-            default_factory=dict,
-            repr=False,
-        )
-    )
-    control_timestamps: list[float] = field(
-        default_factory=list,
-        repr=False,
-    )
-
-
-class BridgeApplicationSession:
-    """Narrow signed-payload facade for a ready bridge session."""
-
-    __slots__ = ("_active", "_deactivated", "_inbox", "_manager", "_session")
-
-    def __init__(
-        self,
-        manager: DomoticzBridgeManager,
-        session: BridgeSession,
-    ) -> None:
-        """Bind the facade to one active bridge session."""
-        self._manager = manager
-        self._session = session
-        self._active = True
-        self._deactivated = asyncio.Event()
-        self._inbox: asyncio.Queue[dict[str, object]] = asyncio.Queue(
-            maxsize=MAX_APPLICATION_INBOX_MESSAGES
-        )
-
-    @property
-    def entry_id(self) -> str:
-        """Return the Home Assistant config entry owning this session."""
-        return self._session.entry_id
-
-    @property
-    def destination_id(self) -> str:
-        """Return the authenticated Domoticz destination identifier."""
-        return self._session.destination_id
-
-    @property
-    def selection(self) -> ProtocolSelection:
-        """Return the authenticated protocol and feature selection."""
-        selection = self._session.selection
-        if selection is None:
-            raise ProtocolError("application session is unavailable")
-        return selection
-
-    def supports(self, feature: str) -> bool:
-        """Return whether the session negotiated one optional feature."""
-        return self.selection.supports(feature)
-
-    async def async_send(self, payload: dict[str, object]) -> None:
-        """Send one signed, in-order application payload."""
-        self._ensure_active()
-        await self._manager._async_send_payload(self._session, payload)
-
-    async def async_receive(self) -> dict[str, object]:
-        """Receive one signed, in-order application payload."""
-        self._ensure_active()
-        payload_task = asyncio.create_task(self._inbox.get())
-        deactivation_task = asyncio.create_task(self._deactivated.wait())
-        try:
-            await asyncio.wait(
-                (payload_task, deactivation_task),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            self._ensure_active()
-            return payload_task.result()
-        finally:
-            for task in (payload_task, deactivation_task):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(
-                payload_task,
-                deactivation_task,
-                return_exceptions=True,
-            )
-
-    def _deliver(self, payload: dict[str, object]) -> None:
-        """Route one manager-verified payload into the bounded application inbox."""
-        self._ensure_active()
-        try:
-            self._inbox.put_nowait(payload)
-        except asyncio.QueueFull:
-            raise ProtocolError("application session is unavailable") from None
-
-    def _deactivate(self) -> None:
-        """Prevent application traffic after the session detaches."""
-        if not self._active:
-            return
-        self._active = False
-        self._deactivated.set()
-        while True:
-            try:
-                self._inbox.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-    def _ensure_active(self) -> None:
-        """Reject use after the application session detaches."""
-        if not self._active:
-            raise ProtocolError("application session is no longer active")
-
-
-def _parse_domoticz_color(color_str: str) -> dict[str, object] | None:
-    """Parse Domoticz color into Home Assistant light service attributes."""
-    if not color_str:
-        return None
-    raw = color_str.strip()
-    if not raw:
-        return None
-
-    if raw.startswith("{") and raw.endswith("}"):
-        try:
-            payload = json.loads(raw)
-            if isinstance(payload, dict):
-                m = payload.get("m")
-                t = payload.get("t")
-                if isinstance(t, (int, float)) and t > 0 and m in (1, 2):
-                    return {"color_temp": int(t)}
-
-                r = payload.get("r")
-                g = payload.get("g")
-                b = payload.get("b")
-                if (
-                    isinstance(r, (int, float))
-                    and isinstance(g, (int, float))
-                    and isinstance(b, (int, float))
-                ):
-                    if (
-                        r > 0
-                        or g > 0
-                        or b > 0
-                        or m in (3, 4)
-                        or not (isinstance(t, (int, float)) and t > 0)
-                    ):
-                        return {
-                            "rgb_color": (
-                                max(0, min(255, int(r))),
-                                max(0, min(255, int(g))),
-                                max(0, min(255, int(b))),
-                            )
-                        }
-                if isinstance(t, (int, float)) and t > 0:
-                    return {"color_temp": int(t)}
-        except (ValueError, TypeError):
-            # Ignore malformed JSON or payload type errors and fall through.
-            pass
-
-    clean = raw.lstrip("#")
-    if len(clean) == 6:
-        try:
-            return {
-                "rgb_color": (
-                    int(clean[0:2], 16),
-                    int(clean[2:4], 16),
-                    int(clean[4:6], 16),
-                )
-            }
-        except ValueError:
-            # Ignore invalid hex strings and fall through.
-            pass
-
-    return None
-
-
-class DomoticzBridgeManager:
+class DomoticzBridgeManager(DomoticzControlHandler, DomoticzSessionRunner):
     """Own configured links and their active authenticated sessions."""
 
     def __init__(self, application: BridgeApplication | None = None) -> None:
@@ -453,7 +222,6 @@ class DomoticzBridgeManager:
                 _POLICY_CLOSE_MESSAGE,
             )
         except ConnectionError:
-            # aiohttp may surface a transport loss while sending or receiving.
             await _async_close(
                 websocket,
                 WSCloseCode.GOING_AWAY,
@@ -510,9 +278,6 @@ class DomoticzBridgeManager:
 
         async with self._lock:
             link = self._links.get(hello.link_id)
-        # Link IDs carry 128 bits of randomness and are not authentication
-        # credentials. Rejecting an unknown ID here releases scarce pre-auth
-        # capacity without weakening pairing-key authentication.
         if link is None:
             raise ProtocolAuthenticationError("protocol authentication failed")
         pairing_key = link.pairing_key
@@ -565,8 +330,6 @@ class DomoticzBridgeManager:
         async with self._lock:
             if session.link_id in self._sessions:
                 raise ProtocolError("protocol authentication failed")
-            # Re-check after the network round trip so an unload or rotation
-            # cannot authenticate against stale credentials.
             if self._links.get(session.link_id) != link:
                 raise ProtocolError("protocol authentication failed")
             self._sessions[session.link_id] = session
@@ -578,799 +341,37 @@ class DomoticzBridgeManager:
             raise
         return session
 
-    async def _async_run_session(self, session: BridgeSession) -> None:
-        """Complete the selected application startup and keep the link alive."""
-        if session.selection is None:
-            await self._async_run_legacy_session(session)
-        else:
-            await self._async_run_v2_session(session)
 
-    async def _async_run_legacy_session(self, session: BridgeSession) -> None:
-        """Preserve the released v1 inventory, ready, and heartbeat behavior."""
-        async with asyncio.timeout(INVENTORY_TIMEOUT):
-            inventory = await self._async_receive_payload(session)
-        if inventory != {"targets": [], "type": "inventory"}:
-            raise ProtocolError("invalid protocol message")
-
-        await self._async_send_payload(session, {"type": "ready"})
-        await self._async_mark_ready(session)
-
-        await self._async_run_heartbeat(session)
-
-    async def _async_run_v2_session(self, session: BridgeSession) -> None:
-        """Exchange application readiness and run negotiated v2 behavior."""
-        selection = session.selection
-        assert selection is not None
-
-        async with asyncio.timeout(INVENTORY_TIMEOUT):
-            parse_application_ready(
-                selection,
-                await self._async_receive_payload(session),
-            )
-        await self._async_send_payload(
-            session,
-            build_application_ready(selection),
-        )
-        await self._async_mark_ready(session)
-
-        continuous_enabled = selection.supports(FEATURE_HA_EXPORT_CONTINUOUS_V1)
-        if continuous_enabled and self._application is None:
-            raise ProtocolError("application session is unavailable")
-        if self._application is not None and any(
-            selection.supports(feature)
-            for feature in (
-                FEATURE_HA_EXPORT_NUMERIC_V1,
-                FEATURE_HA_EXPORT_BINARY_V1,
-                FEATURE_HA_EXPORT_CONTINUOUS_V1,
-            )
-        ):
-            await self._async_run_application(session)
-            return
-
-        await self._async_run_heartbeat(session, None)
-
-    async def _async_run_application(self, session: BridgeSession) -> None:
-        """Run one application task beside the session's sole socket reader."""
-        application = self._application
-        assert application is not None
-        application_session = BridgeApplicationSession(self, session)
-        session.application_session = application_session
-        application_task = asyncio.create_task(
-            application.async_connected(application_session)
-        )
-        session.application_task = application_task
-        reader_task = asyncio.create_task(
-            self._async_run_heartbeat(session, application_session)
-        )
-        primary_error: BaseException | None = None
-        try:
-            done, _pending = await asyncio.wait(
-                (application_task, reader_task),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if application_task in done:
-                try:
-                    await application_task
-                except (asyncio.CancelledError, Exception) as error:
-                    if isinstance(error, asyncio.CancelledError) and not session.ready:
-                        try:
-                            await reader_task
-                        except (asyncio.CancelledError, Exception) as reader_error:
-                            primary_error = reader_error
-                    else:
-                        primary_error = error
-                else:
-                    application_session._deactivate()
-                    try:
-                        await reader_task
-                    except (asyncio.CancelledError, Exception) as error:
-                        primary_error = error
-            else:
-                try:
-                    await reader_task
-                except (asyncio.CancelledError, Exception) as error:
-                    primary_error = error
-        except (asyncio.CancelledError, Exception) as error:
-            primary_error = error
-        finally:
-            application_session._deactivate()
-            for task in (application_task, reader_task):
-                if not task.done():
-                    task.cancel()
-            application_result, reader_result = await asyncio.gather(
-                application_task,
-                reader_task,
-                return_exceptions=True,
-            )
-            if session.application_session is application_session:
-                session.application_session = None
-            if session.application_task is application_task:
-                session.application_task = None
-
-        for result in (application_result, reader_result):
-            if isinstance(result, BaseException) and not isinstance(
-                result,
-                asyncio.CancelledError,
-            ):
-                self._raise_normalized_session_error(result)
-        if primary_error is not None:
-            if isinstance(primary_error, asyncio.CancelledError) and not session.ready:
-                return
-            self._raise_normalized_session_error(primary_error)
-
-    async def _async_run_heartbeat(
-        self,
-        session: BridgeSession,
-        application_session: BridgeApplicationSession | None = None,
-    ) -> None:
-        """Own all session reads, heartbeats, and application dispatch."""
-        pending_ping_id: str | None = None
-        pending_ping_deadline: float | None = None
-        loop = asyncio.get_running_loop()
-        while True:
-            timeout = (
-                max(0.0, pending_ping_deadline - loop.time())
-                if pending_ping_deadline is not None
-                else HEARTBEAT_INTERVAL
-            )
-            try:
-                async with asyncio.timeout(timeout):
-                    payload = await self._async_receive_payload(session)
-            except TimeoutError:
-                if pending_ping_id is not None:
-                    raise _PeerClosed from None
-                ping_id = generate_nonce()
-                await self._async_send_payload(
-                    session,
-                    {"id": ping_id, "type": "ping"},
-                )
-                pending_ping_id = ping_id
-                pending_ping_deadline = loop.time() + HEARTBEAT_RESPONSE_TIMEOUT
-                continue
-
-            if not isinstance(payload, dict):
-                raise ProtocolError("invalid protocol message")
-            message_type = payload.get("type")
-            if message_type == "ping":
-                ping_id = _validate_heartbeat_payload(payload)
-                await self._async_send_payload(
-                    session,
-                    {"id": ping_id, "type": "pong"},
-                )
-                continue
-
-            if message_type == "control_request":
-                if session.selection is None or not session.selection.supports(
-                    FEATURE_DOMOTICZ_CONTROL_V1
-                ):
-                    raise ProtocolError("invalid protocol message")
-                try:
-                    request = parse_control(session.selection, payload)
-                    cached = session.control_results.get(request.request_id)
-                    if cached is not None:
-                        cached_request, result = cached
-                        if request != cached_request:
-                            raise ProtocolError("invalid protocol message")
-                    else:
-                        in_flight = session.in_flight_controls.get(request.request_id)
-                        if in_flight is not None:
-                            in_flight_request, fut = in_flight
-                            if request != in_flight_request:
-                                raise ProtocolError("invalid protocol message")
-                            result = await fut
-                        else:
-                            now = time.monotonic()
-                            session.control_timestamps = [
-                                ts
-                                for ts in session.control_timestamps
-                                if now - ts < CONTROL_WINDOW_SECONDS
-                            ]
-                            if (
-                                len(session.control_timestamps)
-                                >= MAX_CONTROLS_PER_WINDOW
-                            ):
-                                result = build_control_result(
-                                    session.selection,
-                                    request.request_id,
-                                    ControlResultStatus.REJECTED,
-                                    error="rate limit exceeded",
-                                )
-                            else:
-                                session.control_timestamps.append(now)
-                                loop = asyncio.get_running_loop()
-                                fut = loop.create_future()
-                                session.in_flight_controls[request.request_id] = (
-                                    request,
-                                    fut,
-                                )
-                                try:
-                                    result = await self._async_handle_control_request(
-                                        session, request
-                                    )
-                                    fut.set_result(result)
-                                except BaseException as exc:
-                                    if not fut.done():
-                                        fut.set_exception(exc)
-                                    raise
-                                finally:
-                                    session.in_flight_controls.pop(
-                                        request.request_id, None
-                                    )
-
-                                if len(session.control_results) >= MAX_CONTROL_RESULTS:
-                                    oldest_request_id = next(
-                                        iter(session.control_results)
-                                    )
-                                    session.control_results.pop(oldest_request_id)
-                                session.control_results[request.request_id] = (
-                                    request,
-                                    result,
-                                )
-                except Exception:
-                    raise ProtocolError("invalid protocol message") from None
-                await self._async_send_payload(session, result)
-                continue
-
-            if message_type == "pong":
-                pong_id = _validate_heartbeat_payload(payload)
-                if pending_ping_id is None or pong_id != pending_ping_id:
-                    raise ProtocolError("invalid protocol message")
-                pending_ping_id = None
-                pending_ping_deadline = None
-                continue
-
-            if application_session is None:
-                raise ProtocolError("invalid protocol message")
-            application_session._deliver(payload)
-
-    async def _async_receive_payload(
-        self,
-        session: BridgeSession,
-    ) -> dict[str, object]:
-        """Receive one authenticated, in-order client envelope."""
-        verified = verify_envelope(
-            session.session_key,
-            await _async_receive_document(session.websocket),
-            protocol_version=(
-                session.selection.version
-                if session.selection is not None
-                else PROTOCOL_VERSION
-            ),
-            expected_direction=DIRECTION_DOMOTICZ_TO_HA,
-            expected_session_id=session.session_id,
-            last_sequence=session.client_sequence,
-        )
-        session.client_sequence = verified.sequence
-        return verified.payload
-
-    async def _async_send_payload(
-        self,
-        session: BridgeSession,
-        payload: dict[str, object],
-    ) -> None:
-        """Send one authenticated, in-order server envelope."""
-        async with session.send_lock:
-            async with self._lock:
-                if self._sessions.get(session.link_id) is not session:
-                    raise ProtocolError("application session is no longer active")
-            sequence = session.server_sequence + 1
-            document = sign_envelope(
-                session.session_key,
-                protocol_version=(
-                    session.selection.version
-                    if session.selection is not None
-                    else PROTOCOL_VERSION
-                ),
-                direction=DIRECTION_HA_TO_DOMOTICZ,
-                session_id=session.session_id,
-                sequence=sequence,
-                payload=payload,
-            )
-            await _async_send_document(session.websocket, document)
-            session.server_sequence = sequence
-
-    @staticmethod
-    async def _async_close_session(
-        session: BridgeSession,
-        code: WSCloseCode,
-        message: bytes,
-    ) -> None:
-        """Close a detached session after stopping its application work."""
-        await _async_close(session.websocket, code, message)
-
-    async def _async_release_session(self, session: BridgeSession) -> None:
-        """Release a session only if it is still the active instance."""
-        async with self._lock:
-            self._deactivate_session(session)
-            if self._sessions.get(session.link_id) is session:
-                self._sessions.pop(session.link_id)
-
-    async def _async_mark_ready(self, session: BridgeSession) -> None:
-        """Atomically mark only the exact still-active session ready."""
-        async with self._lock:
-            if self._sessions.get(session.link_id) is not session:
-                raise _PeerClosed
-            session.ready = True
-
-    @staticmethod
-    def _deactivate_session(session: BridgeSession) -> None:
-        """Synchronously stop application work for one detached session."""
-        session.ready = False
-        application_session = session.application_session
-        if application_session is not None:
-            application_session._deactivate()
-        application_task = session.application_task
-        if application_task is not None and not application_task.done():
-            application_task.cancel()
-
-    @staticmethod
-    def _raise_normalized_session_error(error: BaseException) -> None:
-        """Raise expected transport failures or one fixed fail-closed error."""
-        if not isinstance(error, Exception):
-            raise error
-        if isinstance(
-            error,
-            (
-                _PeerClosed,
-                ProtocolError,
-                TimeoutError,
-                ConnectionError,
-            ),
-        ):
-            raise error
-        raise ProtocolError("application session is unavailable") from None
-
-    async def _async_find_mapped_capability(
-        self,
-        entry_id: str,
-        destination_id: str,
-        target_id: str,
-    ) -> Capability | CompoundCapability | None:
-        """Find a mapped capability across numeric and binary catalogs."""
-        if self._application is None:
-            return None
-        hass = self._application._hass
-
-        # 1. Check numeric catalog
-        num_storage = HomeAssistantCatalogStorage(
-            hass,
-            entry_id=entry_id,
-            destination_id=destination_id,
-        )
-        try:
-            num_doc = await num_storage.async_load()
-            if num_doc is not None:
-                num_catalog = catalog_from_document(num_doc)
-                for record in num_catalog:
-                    if record.target_id == target_id:
-                        return record.capability
-        except Exception:
-            _LOGGER.warning(
-                "Unable to load numeric export catalog for reverse command lookup"
-            )
-
-        # 2. Check binary catalog
-        bin_storage = HomeAssistantBinaryCatalogStorage(
-            hass,
-            entry_id=entry_id,
-            destination_id=destination_id,
-        )
-        try:
-            bin_doc = await bin_storage.async_load()
-            if bin_doc is not None:
-                bin_catalog = catalog_from_document(bin_doc)
-                for record in bin_catalog:
-                    if record.target_id == target_id:
-                        return record.capability
-        except Exception:
-            _LOGGER.warning(
-                "Unable to load binary export catalog for reverse command lookup"
-            )
-
-        return None
-
-    async def _async_handle_control_request(
-        self,
-        session: BridgeSession,
-        request: object,
-    ) -> dict[str, object]:
-        """Validate, map, and execute one incoming Domoticz control request."""
-        # Since request is passed as parsed object (ControlRequest)
-        if self._application is None:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="bridge application is unavailable",
-            )
-        hass = self._application._hass
-
-        if request.unit != 1:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="target unit is not controllable",
-            )
-
-        # 1. Find the mapped capability in the target catalogs
-        capability = await self._async_find_mapped_capability(
-            session.entry_id,
-            session.destination_id,
-            request.target_id,
-        )
-        if capability is None:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="target is not owned by this session",
-            )
-
-        # 2. Get the Home Assistant entity_id using the entity registry
-        from homeassistant.helpers import entity_registry as er
-
-        registry = er.async_get(hass)
-        entry = registry.async_get(capability.source.object_id)
-        if entry is None:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="source entity is unavailable",
-            )
-
-        if entry.disabled_by is not None:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="source entity is disabled",
-            )
-
-        entity_id = entry.entity_id
-        if entry.domain not in CONTROLLABLE_EXPORT_DOMAINS:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="source entity is not controllable",
-            )
-
-        current_state = hass.states.get(entity_id)
-        if current_state is None or current_state.state == "unavailable":
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="source entity is unavailable",
-            )
-
-        # 3. Map command to Home Assistant service
-        cmd = request.command.lower()
-        if entry.domain in {"switch", "input_boolean"}:
-            if cmd == "on":
-                domain = "homeassistant"
-                service = "turn_on"
-                data = {"entity_id": entity_id}
-            elif cmd == "off":
-                domain = "homeassistant"
-                service = "turn_off"
-                data = {"entity_id": entity_id}
-            elif cmd == "toggle":
-                domain = "homeassistant"
-                service = "toggle"
-                data = {"entity_id": entity_id}
-            else:
-                return build_control_result(
-                    session.selection,
-                    request.request_id,
-                    ControlResultStatus.REJECTED,
-                    error="command is not supported",
-                )
-
-        elif entry.domain == "light":
-            if cmd == "on":
-                domain = "light"
-                service = "turn_on"
-                data = {"entity_id": entity_id}
-            elif cmd == "off":
-                domain = "light"
-                service = "turn_off"
-                data = {"entity_id": entity_id}
-            elif cmd == "toggle":
-                domain = "light"
-                service = "toggle"
-                data = {"entity_id": entity_id}
-            elif cmd in {"set level", "setlevel", "set_level"}:
-                domain = "light"
-                service = "turn_on"
-                data = {
-                    "entity_id": entity_id,
-                    "brightness_pct": max(0, min(100, int(round(request.level)))),
-                }
-            elif cmd in {"set color", "setcolor", "set_color"}:
-                domain = "light"
-                service = "turn_on"
-                data = {"entity_id": entity_id}
-                if request.level > 0:
-                    data["brightness_pct"] = max(0, min(100, int(round(request.level))))
-                color_data = _parse_domoticz_color(request.color)
-                if color_data is not None:
-                    data.update(color_data)
-            else:
-                return build_control_result(
-                    session.selection,
-                    request.request_id,
-                    ControlResultStatus.REJECTED,
-                    error="command is not supported",
-                )
-
-        elif entry.domain == "cover":
-            if cmd == "open":
-                domain = "cover"
-                service = "open_cover"
-                data = {"entity_id": entity_id}
-            elif cmd == "close":
-                domain = "cover"
-                service = "close_cover"
-                data = {"entity_id": entity_id}
-            elif cmd == "stop":
-                domain = "cover"
-                service = "stop_cover"
-                data = {"entity_id": entity_id}
-            elif cmd in {"set level", "setlevel", "set_level"}:
-                domain = "cover"
-                service = "set_cover_position"
-                data = {
-                    "entity_id": entity_id,
-                    "position": max(0, min(100, int(round(request.level)))),
-                }
-            else:
-                return build_control_result(
-                    session.selection,
-                    request.request_id,
-                    ControlResultStatus.REJECTED,
-                    error="command is not supported",
-                )
-
-        elif entry.domain == "button":
-            if cmd in {"press", "on"}:
-                domain = "button"
-                service = "press"
-                data = {"entity_id": entity_id}
-            else:
-                return build_control_result(
-                    session.selection,
-                    request.request_id,
-                    ControlResultStatus.REJECTED,
-                    error="command is not supported",
-                )
-
-        elif entry.domain == "vacuum":
-            if cmd in {"on", "start", "clean"}:
-                domain = "vacuum"
-                service = "start"
-                data = {"entity_id": entity_id}
-            elif cmd in {"off", "dock", "return_to_base"}:
-                domain = "vacuum"
-                service = "return_to_base"
-                data = {"entity_id": entity_id}
-            elif cmd == "pause":
-                domain = "vacuum"
-                service = "pause"
-                data = {"entity_id": entity_id}
-            elif cmd == "stop":
-                domain = "vacuum"
-                service = "stop"
-                data = {"entity_id": entity_id}
-            elif cmd == "toggle":
-                domain = "vacuum"
-                if current_state.state in {"on", "cleaning"}:
-                    service = "return_to_base"
-                else:
-                    service = "start"
-                data = {"entity_id": entity_id}
-            elif cmd in {"set level", "setlevel", "set_level"}:
-                level_int = int(round(request.level))
-                domain = "vacuum"
-                if level_int == 10:
-                    service = "start"
-                elif level_int == 20:
-                    service = "pause"
-                elif level_int in {0, 30}:
-                    service = "return_to_base"
-                elif level_int == 40:
-                    service = "stop"
-                else:
-                    return build_control_result(
-                        session.selection,
-                        request.request_id,
-                        ControlResultStatus.REJECTED,
-                        error="selector level is not supported",
-                    )
-                data = {"entity_id": entity_id}
-        elif entry.domain in {"select", "input_select"}:
-            domain = entry.domain
-            service = "select_option"
-            options = current_state.attributes.get("options", ())
-            if not isinstance(options, (list, tuple)) or not options:
-                return build_control_result(
-                    session.selection,
-                    request.request_id,
-                    ControlResultStatus.REJECTED,
-                    error="selector options are unavailable",
-                )
-            if cmd in {"set level", "setlevel", "set_level"}:
-                level_int = int(round(request.level))
-                idx = (level_int // 10) - 1
-                if 0 <= idx < len(options):
-                    selected_option = options[idx]
-                elif 0 <= level_int // 10 < len(options) and level_int % 10 == 0:
-                    selected_option = options[level_int // 10]
-                else:
-                    return build_control_result(
-                        session.selection,
-                        request.request_id,
-                        ControlResultStatus.REJECTED,
-                        error="selector level is not supported",
-                    )
-                data = {"entity_id": entity_id, "option": selected_option}
-            elif cmd in {"select_option", "selectoption"}:
-                selected_option = request.color or ""
-                if not selected_option or selected_option not in options:
-                    return build_control_result(
-                        session.selection,
-                        request.request_id,
-                        ControlResultStatus.REJECTED,
-                        error="option is not supported",
-                    )
-                data = {"entity_id": entity_id, "option": selected_option}
-            else:
-                return build_control_result(
-                    session.selection,
-                    request.request_id,
-                    ControlResultStatus.REJECTED,
-                    error="command is not supported",
-                )
-        else:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="source entity is not controllable",
-            )
-
-        # 4. Call the service safely
-        try:
-            await hass.services.async_call(
-                domain,
-                service,
-                data,
-                blocking=True,
-            )
-        except Exception:
-            return build_control_result(
-                session.selection,
-                request.request_id,
-                ControlResultStatus.REJECTED,
-                error="service call failed",
-            )
-
-        return build_control_result(
-            session.selection,
-            request.request_id,
-            ControlResultStatus.CONFIRMED,
-        )
-
-
-class DomoticzBridgeView(HomeAssistantView):
-    """Unauthenticated HTTP upgrade endpoint with protocol-level authentication."""
-
-    name = f"api:{DOMAIN}:websocket"
-    url = BRIDGE_WEBSOCKET_PATH
-    requires_auth = False
-    cors_allowed = False
-
-    def __init__(self, manager: DomoticzBridgeManager) -> None:
-        """Initialize the singleton view."""
-        self._manager = manager
-
-    async def get(self, request: web.Request) -> web.StreamResponse:
-        """Upgrade one bounded Domoticz bridge connection."""
-        if not await self._manager.async_reserve_handshake():
-            return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
-
-        try:
-            client_protocols = _request_protocols(request)
-            if (
-                client_protocols
-                and select_websocket_subprotocol(
-                    client_protocols,
-                    SUPPORTED_WEBSOCKET_SUBPROTOCOLS,
-                )
-                is None
-            ):
-                await self._manager.async_release_handshake()
-                return web.Response(status=HTTPStatus.BAD_REQUEST)
-        except ProtocolError:
-            await self._manager.async_release_handshake()
-            return web.Response(status=HTTPStatus.BAD_REQUEST)
-
-        websocket = web.WebSocketResponse(
-            autoping=True,
-            compress=False,
-            max_msg_size=MAX_BRIDGE_MESSAGE_BYTES,
-            protocols=SUPPORTED_WEBSOCKET_SUBPROTOCOLS,
-        )
-        try:
-            async with asyncio.timeout(PREPARE_TIMEOUT):
-                await websocket.prepare(request)
-        except BaseException:
-            await self._manager.async_release_handshake()
-            raise
-
-        await self._manager.async_handle_reserved(
-            websocket,
-            client_protocols=client_protocols,
-            selected_protocol=websocket.ws_protocol,
-        )
-        return websocket
-
-
-async def _async_receive_document(
-    websocket: web.WebSocketResponse,
-) -> object:
-    """Receive one canonical text document or classify a closed peer."""
-    message = await websocket.receive()
-    if message.type is WSMsgType.TEXT:
-        return canonical_json_loads(message.data)
-    if message.type in {
-        WSMsgType.CLOSE,
-        WSMsgType.CLOSED,
-        WSMsgType.CLOSING,
-        WSMsgType.ERROR,
-    }:
-        raise _PeerClosed
-    raise ProtocolError("invalid protocol message")
-
-
-async def _async_send_document(
-    websocket: web.WebSocketResponse,
-    document: object,
-) -> None:
-    """Send one canonical text document."""
-    await websocket.send_str(canonical_json_dumps(document))
-
-
-def _validate_heartbeat_payload(payload: dict[str, object]) -> str:
-    """Validate an exact signed application heartbeat payload."""
-    if set(payload) != {"id", "type"}:
-        raise ProtocolError("invalid protocol message")
-    heartbeat_id = payload["id"]
-    validate_nonce(heartbeat_id)
-    assert isinstance(heartbeat_id, str)
-    return heartbeat_id
-
-
-def _request_protocols(request: web.Request) -> tuple[str, ...]:
-    """Normalize the ordered WebSocket protocol offer from HTTP headers."""
-    header_values = request.headers.getall("Sec-WebSocket-Protocol", ())
-    if not header_values:
-        return ()
-    tokens = [
-        token.strip()
-        for header_value in header_values
-        for token in header_value.split(",")
-    ]
-    return validate_protocol_tokens(tokens)
-
-
-async def _async_close(
-    websocket: web.WebSocketResponse,
-    code: WSCloseCode,
-    message: bytes,
-) -> None:
-    """Close a WebSocket without leaking protocol or credential details."""
-    if not websocket.closed:
-        await websocket.close(code=code, message=message)
+__all__ = [
+    "AUTHENTICATION_TIMEOUT",
+    "BRIDGE_WEBSOCKET_PATH",
+    "CONTROL_WINDOW_SECONDS",
+    "FIRST_MESSAGE_TIMEOUT",
+    "HEARTBEAT_INTERVAL",
+    "HEARTBEAT_RESPONSE_TIMEOUT",
+    "INVENTORY_TIMEOUT",
+    "MAX_APPLICATION_INBOX_MESSAGES",
+    "MAX_BRIDGE_MESSAGE_BYTES",
+    "MAX_CONTROL_RESULTS",
+    "MAX_CONTROLS_PER_WINDOW",
+    "MAX_PENDING_HANDSHAKES",
+    "PREPARE_TIMEOUT",
+    "BridgeApplication",
+    "BridgeApplicationSession",
+    "BridgeConfigurationError",
+    "BridgeLink",
+    "BridgeSession",
+    "DomoticzBridgeManager",
+    "DomoticzBridgeView",
+    "DomoticzControlHandler",
+    "HomeAssistantBinaryCatalogStorage",
+    "HomeAssistantCatalogStorage",
+    "_POLICY_CLOSE_MESSAGE",
+    "_PeerClosed",
+    "_async_close",
+    "_async_receive_document",
+    "_async_send_document",
+    "_parse_domoticz_color",
+    "_request_protocols",
+    "_validate_heartbeat_payload",
+]

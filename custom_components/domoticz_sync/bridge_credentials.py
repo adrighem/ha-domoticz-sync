@@ -17,6 +17,24 @@ from .core.protocol import (
 )
 
 
+class BridgeConfigurationError(ValueError):
+    """A bridge link conflicts with another configured link."""
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeLink:
+    """Credentials for one configured Domoticz bridge."""
+
+    entry_id: str
+    link_id: str
+    pairing_key: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        """Validate credentials even when constructed directly."""
+        validate_link_id(self.link_id)
+        validate_pairing_key(self.pairing_key)
+
+
 @dataclass(frozen=True, slots=True)
 class BridgeCredentials:
     """One validated bridge identity and secret."""
